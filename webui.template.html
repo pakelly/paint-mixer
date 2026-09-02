@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paint Mixer — BattleTech paint mixing tool</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1d2026;
+    --panel2: #232730;
+    --border: #2e333d;
+    --text: #e6e8ec;
+    --dim: #9aa0ab;
+    --accent: #4fc3f7;
+    --good: #4caf50;
+    --warn: #ffb74d;
+    --bad: #ef5350;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 20px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .subtitle { color: var(--dim); font-size: 0.85rem; margin-bottom: 20px; }
+  h2 { font-size: 1.05rem; margin-bottom: 12px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .tab {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .tab.active { background: var(--accent); color: #0b1a24; border-color: var(--accent); font-weight: 600; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+  .row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 0.8rem; color: var(--dim); }
+  input[type=color] {
+    width: 56px; height: 40px; border: 1px solid var(--border); border-radius: 8px;
+    background: none; padding: 2px; cursor: pointer;
+  }
+  input[type=text] {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 10px; border-radius: 8px; font-size: 0.95rem; width: 130px;
+    font-family: ui-monospace, monospace;
+  }
+  button {
+    background: var(--accent); color: #0b1a24; border: none; padding: 10px 18px;
+    border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+  }
+  button.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  .results { margin-top: 20px; display: grid; gap: 14px; }
+  .result {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .swatch {
+    width: 44px; height: 44px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.15);
+    flex-shrink: 0;
+  }
+  .swatch-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .swatch-sm { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.2); }
+  .result-info { flex: 1; min-width: 220px; }
+  .result-title { font-weight: 600; margin-bottom: 4px; }
+  .result-detail { color: var(--dim); font-size: 0.85rem; }
+  .dE-good { color: var(--good); font-weight: 700; }
+  .dE-ok { color: var(--warn); font-weight: 700; }
+  .dE-bad { color: var(--bad); font-weight: 700; }
+  .mix-part { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  .mix-part .pct { font-weight: 700; min-width: 34px; }
+  .mix-part .pname { font-size: 0.85rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .paint-card {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px; display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+    transition: transform 0.1s;
+  }
+  .paint-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .paint-card .bar { height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); }
+  .paint-card .pname { font-size: 0.75rem; color: var(--text); }
+  .paint-card .ptype { font-size: 0.65rem; color: var(--dim); }
+  .gaps-list { display: grid; gap: 10px; }
+  .gap-item { display: flex; align-items: center; gap: 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; flex-wrap: wrap; }
+  .gap-meta { flex: 1; min-width: 200px; }
+  .gap-name { font-weight: 600; }
+  .gap-rec { color: var(--dim); font-size: 0.8rem; margin-top: 3px; }
+  .summary-strip { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .pill { background: var(--panel2); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: 0.78rem; color: var(--dim); }
+  .pill b { color: var(--text); }
+  .hint { color: var(--dim); font-size: 0.8rem; margin-top: 8px; }
+  .collection-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .toggle { position: relative; width: 44px; height: 24px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 24px; transition: 0.2s;
+  }
+  .slider:before {
+    content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px;
+    background: var(--dim); border-radius: 50%; transition: 0.2s;
+  }
+  input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+  input:checked + .slider:before { transform: translateX(20px); background: #0b1a24; }
+  .mode-note { font-size: 0.8rem; color: var(--dim); }
+  .note { font-size: 0.78rem; color: var(--dim); margin-top: 6px; line-height: 1.4; }
+</style>
+</head>
+<body>
+
+<h1>🎨 Paint Mixer</h1>
+<div class="subtitle">Subtractive mixing model in CIE Lab · CIEDE2000 evaluation · Army Painter Fanatic line</div>
+
+<div class="tabs">
+  <button class="tab active" data-tab="mix">Mix toward color</button>
+  <button class="tab" data-tab="collection">My paints</button>
+  <button class="tab" data-tab="gaps">Collection gaps</button>
+</div>
+
+<!-- ============ MIX TAB ============ -->
+<div id="tab-mix" class="tab-content">
+  <div class="panel">
+    <div class="row">
+      <div class="field">
+        <label>Target color</label>
+        <input type="color" id="target-picker" value="#8b5a2b">
+      </div>
+      <div class="field">
+        <label>Hex</label>
+        <input type="text" id="target-hex" value="#8b5a2b" maxlength="7">
+      </div>
+      <div class="collection-toggle">
+        <label class="toggle">
+          <input type="checkbox" id="use-collection" checked>
+          <span class="slider"></span>
+        </label>
+        <span class="mode-note">Use my collection only</span>
+      </div>
+      <button id="mix-btn">Mix</button>
+    </div>
+    <div class="note">Model caveat: hex values are eyedropped from marketing swatches, and real pigment behavior (opacity, tint strength) isn't captured — treat ratios as a starting point, then adjust by eye.</div>
+    <div class="hint" id="mix-hint"></div>
+  </div>
+  <div class="results" id="mix-results"></div>
+</div>
+
+<!-- ============ COLLECTION TAB ============ -->
+<div id="tab-collection" class="tab-content" style="display:none">
+  <div class="panel">
+    <h2>My collection (<span id="coll-count"></span> paints)</h2>
+    <div class="summary-strip" id="coll-summary"></div>
+    <div class="grid" id="coll-grid"></div>
+  </div>
+</div>
+
+<!-- ============ GAPS TAB ============ -->
+<div id="tab-gaps" class="tab-content" style="display:none">
+  <div class="panel">
+    <h2>Hardest colors to mix toward</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button id="gaps-run" class="secondary">Run gap analysis</button>
+      <span class="mode-note" id="gaps-note"></span>
+    </div>
+    <div class="note">Targets the full Fanatic line; shows colors your collection can't get close to, and the single unowned paint that would most improve coverage.</div>
+    <div class="gaps-list" id="gaps-list" style="margin-top:14px"></div>
+  </div>
+</div>
+
+<script>
+// ================= DATA =================
+const ALL_PAINTS = /*__PAINTS__*/;
+const MY_COLLECTION = /*__COLLECTION__*/;
+
+const COLLECTION_NAMES = new Set(MY_COLLECTION);
+let paintCache = null;
+function getPaints(useCollection) {
+  if (paintCache) return paintCache;
+  const source = useCollection ? ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name)) : ALL_PAINTS;
+  paintCache = source.map(p => ({ ...p, rgb: hexToRgb(p.hex), lab: rgbToLab(hexToRgb(p.hex)) }));
+  return paintCache;
+}
+function clearCache() { paintCache = null; }
+
+// ================= COLOR MATH =================
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [parseInt(h.slice(0,2),16)/255, parseInt(h.slice(2,4),16)/255, parseInt(h.slice(4,6),16)/255];
+}
+function rgbToHex(r, g, b) {
+  const to = v => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+  return '#' + to(r) + to(g) + to(b);
+}
+function srgbToLinear(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+function linearToSrgb(c) { return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1/2.4) - 0.055; }
+function rgbLinear(rgb) { return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])]; }
+
+const M = [[0.4124564,0.3575761,0.1804375],[0.2126729,0.7151522,0.0721750],[0.0193339,0.1191920,0.9503041]];
+function rgbLinearToXyz(r,g,b) { return [M[0][0]*r+M[0][1]*g+M[0][2]*b, M[1][0]*r+M[1][1]*g+M[1][2]*b, M[2][0]*r+M[2][1]*g+M[2][2]*b]; }
+const REF_X=0.95047, REF_Y=1.0, REF_Z=1.08883;
+function labF(t) { return t > 0.008856 ? Math.cbrt(t) : 7.787*t + 16/116; }
+function labFInv(t) { return t > 0.206893 ? t*t*t : (t - 16/116)/7.787; }
+function xyzToLab(x,y,z) {
+  const fx=labF(x/REF_X), fy=labF(y/REF_Y), fz=labF(z/REF_Z);
+  return [116*fy-16, 500*(fx-fy), 200*(fy-fz)];
+}
+function labToXyz(L,a,b) {
+  const fy=(L+16)/116, fx=fy+a/500, fz=fy-b/200;
+  return [labFInv(fx)*REF_X, labFInv(fy)*REF_Y, labFInv(fz)*REF_Z];
+}
+const MINV = [[3.2404542,-1.5371385,-0.4985314],[-0.9692660,1.8760108,0.0415560],[0.0556434,-0.2040259,1.0572252]];
+function xyzToRgbLinear(x,y,z) { return [MINV[0][0]*x+MINV[0][1]*y+MINV[0][2]*z, MINV[1][0]*x+MINV[1][1]*y+MINV[1][2]*z, MINV[2][0]*x+MINV[2][1]*y+MINV[2][2]*z]; }
+function labToRgb(lab) {
+  const [x,y,z] = labToXyz(lab[0],lab[1],lab[2]);
+  const [r,g,b] = xyzToRgbLinear(x,y,z);
+  return [linearToSrgb(r), linearToSrgb(g), linearToSrgb(b)];
+}
+function rgbToLab(rgb) { const [r,g,b] = rgbLinear(rgb); const [x,y,z] = rgbLinearToXyz(r,g,b); return xyzToLab(x,y,z); }
+
+function deltaE2000(l1, l2) {
+  const [L1,a1,b1]=l1, [L2,a2,b2]=l2;
+  const C1=Math.sqrt(a1*a1+b1*b1), C2=Math.sqrt(a2*a2+b2*b2);
+  const Cbar=(C1+C2)/2;
+  const G=0.5*(1-Math.sqrt(Math.pow(Cbar,7)/(Math.pow(Cbar,7)+Math.pow(25,7))));
+  const a1p=(1+G)*a1, a2p=(1+G)*a2;
+  const C1p=Math.sqrt(a1p*a1p+b1*b1), C2p=Math.sqrt(a2p*a2p+b2*b2);
+  let h1p=Math.atan2(b1,a1p)*180/Math.PI; if(h1p<0)h1p+=360;
+  let h2p=Math.atan2(b2,a2p)*180/Math.PI; if(h2p<0)h2p+=360;
+  const dLp=L2-L1, dCp=C2p-C1p;
+  let dhp=0;
+  if(C1p*C2p!==0){ let d=h2p-h1p; if(d>180)d-=360; else if(d<-180)d+=360; dhp=d; }
+  const dHp=2*Math.sqrt(C1p*C2p)*Math.sin(dhp*Math.PI/360);
+  const Lbarp=(L1+L2)/2, Cbarp=(C1p+C2p)/2;
+  let hbarp=0;
+  if(C1p*C2p!==0){ hbarp=(h1p+h2p)/2; if(Math.abs(h1p-h2p)>180){ if(h1p+h2p<360)hbarp+=180; else hbarp-=180; } }
+  const T=1-0.17*Math.cos((hbarp-30)*Math.PI/180)+0.24*Math.cos(2*hbarp*Math.PI/180)+0.32*Math.cos((3*hbarp+6)*Math.PI/180)-0.20*Math.cos((4*hbarp-63)*Math.PI/180);
+  const dTheta=30*Math.exp(-Math.pow((hbarp-275)/25,2));
+  const RC=2*Math.sqrt(Math.pow(Cbarp,7)/(Math.pow(Cbarp,7)+Math.pow(25,7)));
+  const SL=1+(0.015*Math.pow(Lbarp-50,2))/Math.sqrt(20+Math.pow(Lbarp-50,2));
+  const SC=1+0.045*Cbarp;
+  const RT=-Math.sin(2*dTheta*Math.PI/180)*RC;
+  const SH=1+0.015*Cbarp*T;
+  const dLpSL=dLp/SL, dCpSC=dCp/SC, dHpSH=dHp/SH;
+  return Math.sqrt(dLpSL*dLpSL+dCpSC*dCpSC+dHpSH*dHpSH+RT*dCpSC*dHpSH);
+}
+
+// Subtractive mix: weighted geometric mean in linear RGB
+function simulateMix(paints, ratios) {
+  const eps = 1e-6;
+  const logSum = [0,0,0];
+  for (let i=0; i<paints.length; i++) {
+    const r = ratios[i];
+    if (r <= 0) continue;
+    const lin = rgbLinear(paints[i].rgb);
+    logSum[0] += r * Math.log(lin[0]+eps);
+    logSum[1] += r * Math.log(lin[1]+eps);
+    logSum[2] += r * Math.log(lin[2]+eps);
+  }
+  const out = [Math.exp(logSum[0]), Math.exp(logSum[1]), Math.exp(logSum[2])];
+  return rgbToLab([linearToSrgb(out[0]), linearToSrgb(out[1]), linearToSrgb(out[2])]);
+}
+
+// ================= SEARCH =================
+function findMix(paints, targetLab, maxPaints=3, grid=15) {
+  const n = paints.length;
+  let best = { dE: Infinity };
+
+  const withDist = paints.map(p => ({ ...p, d: deltaE2000(p.lab, targetLab) }));
+  withDist.sort((a,b) => a.d - b.d);
+  const shortlist = withDist.slice(0, 25);
+
+  const MAX_PAIRS = 12;
+  const bestPairs = [];
+  const pushPair = p => {
+    if (bestPairs.length < MAX_PAIRS) { bestPairs.push(p); bestPairs.sort((a,b)=>a.dE-b.dE); }
+    else if (p.dE < bestPairs[MAX_PAIRS-1].dE) { bestPairs[MAX_PAIRS-1]=p; bestPairs.sort((a,b)=>a.dE-b.dE); }
+  };
+
+  for (let i=0; i<n; i++) {
+    for (let j=i; j<n; j++) {
+      for (let k=0; k<=grid; k++) {
+        const w1=k/grid, w2=1-w1;
+        if (w1===0 && i!==j) continue;
+        if (w2===0 && i!==j) continue;
+        const mixLab = simulateMix([paints[i],paints[j]], [w1,w2]);
+        const dE = deltaE2000(mixLab, targetLab);
+        if (dE < best.dE) {
+          const out = labToRgb(mixLab);
+          best = { dE, paints: [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(w1*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(w2*100)}], resultHex: rgbToHex(out[0],out[1],out[2]) };
+        }
+        pushPair({i,j,w1,w2,dE});
+      }
+    }
+  }
+
+  if (maxPaints >= 3) {
+    const nameHexIdx = new Map(paints.map((p,idx)=>[p.name+'|'+p.hex, idx]));
+    const thirdGrid = [0.15,0.25,0.35,0.45];
+    for (const pair of bestPairs) {
+      const { i, j, w1, w2 } = pair;
+      for (const k of shortlist) {
+        const ki = nameHexIdx.get(k.name+'|'+k.hex);
+        if (ki===undefined || ki===i || ki===j) continue;
+        for (const tw of thirdGrid) {
+          const a=w1*(1-tw), b=w2*(1-tw), c=tw;
+          const mixLab = simulateMix([paints[i],paints[j],paints[ki]], [a,b,c]);
+          const dE = deltaE2000(mixLab, targetLab);
+          if (dE < best.dE) {
+            const out = labToRgb(mixLab);
+            const parts = [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(a*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(b*100)},{name:paints[ki].name,hex:paints[ki].hex,ratio:Math.round(c*100)}].filter(p=>p.ratio>0);
+            best = { dE, paints: parts, resultHex: rgbToHex(out[0],out[1],out[2]) };
+          }
+        }
+      }
+    }
+  }
+  return best;
+}
+
+// ================= UI HELPERS =================
+function dEClass(dE) { return dE < 2 ? 'dE-good' : dE < 5 ? 'dE-ok' : 'dE-bad'; }
+function dELabel(dE) {
+  if (dE < 1) return 'imperceptible';
+  if (dE < 2) return 'barely perceptible';
+  if (dE < 5) return 'noticeable';
+  if (dE < 10) return 'clearly different';
+  return 'very different';
+}
+function mixPartHTML(p) {
+  return '<div class="mix-part"><span class="pct">' + p.ratio + '%</span><span class="swatch-sm" style="background:' + p.hex + '"></span><span class="pname">' + esc(p.name) + '</span></div>';
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function hsvOf(rgb) {
+  const r=rgb[0], g=rgb[1], b=rgb[2];
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  let h=0;
+  if (d!==0) {
+    if (max===r) h=((g-b)/d)%6; else if (max===g) h=(b-r)/d+2; else h=(r-g)/d+4;
+    h*=60; if (h<0) h+=360;
+  }
+  return [h, max===0?0:d/max, max];
+}
+
+function renderMixResults(targetHex) {
+  const useCollection = document.getElementById('use-collection').checked;
+  const paints = getPaints(useCollection);
+  const targetRgb = hexToRgb(targetHex);
+  const targetLab = rgbToLab(targetRgb);
+  const t0 = performance.now();
+  const best2 = findMix(paints, targetLab, 2, 15);
+  const best3 = findMix(paints, targetLab, 3, 7);
+  const ms = Math.round(performance.now() - t0);
+
+  document.getElementById('mix-hint').textContent =
+    paints.length + ' paints searched in ' + ms + 'ms — weighted geometric mean in linear RGB, evaluated with CIEDE2000.';
+
+  const results = document.getElementById('mix-results');
+  const hsv = hsvOf(targetRgb);
+  let blocks = '<div class="result"><span class="swatch" style="background:' + targetHex + '"></span><div class="result-info"><div class="result-title">Target</div><div class="result-detail">' + targetHex + ' · H=' + hsv[0].toFixed(0) + '° S=' + (hsv[1]*100).toFixed(0) + '% V=' + (hsv[2]*100).toFixed(0) + '%</div></div></div>';
+
+  if (best2.paints) {
+    blocks += '<div class="result"><span class="swatch" style="background:' + best2.resultHex + '"></span><div class="result-info"><div class="result-title">Best 2-paint mix</div><div class="result-detail">Predicted <b>' + best2.resultHex + '</b> · ΔE <span class="' + dEClass(best2.dE) + '">' + best2.dE.toFixed(1) + '</span> (' + dELabel(best2.dE) + ')</div></div><div class="swatch-row">' + best2.paints.map(mixPartHTML).join('') + '</div></div>';
+  }
+
+  if (best3.paints && best3.paints.length > 2) {
+    blocks += '<div class="result"><span class="swatch" style="background:' + best3.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + best3.resultHex + '</b> · ΔE <span class="' + dEClass(best3.dE) + '">' + best3.dE.toFixed(1) + '</span> (' + dELabel(best3.dE) + ')</div></div><div class="swatch-row">' + best3.paints.map(mixPartHTML).join('') + '</div></div>';
+  } else if (best2.paints) {
+    blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
+  }
+
+  results.innerHTML = blocks;
+}
+
+// ================= COLLECTION TAB =================
+function renderCollection() {
+  const paints = getPaints(true);
+  document.getElementById('coll-count').textContent = paints.length;
+
+  const sectors = {};
+  for (const p of paints) {
+    const hsv = hsvOf(p.rgb);
+    if (hsv[1]*100 < 8) { sectors['N'] = (sectors['N']||0)+1; }
+    else { const key = Math.floor(hsv[0]/30); sectors[key] = (sectors[key]||0)+1; }
+  }
+  const names = ['Red','Orange','Ylw','Y-Grn','Green','G-Cyan','Cyan','Blue','B-Purp','Purple','Mag','Pink'];
+  const keys = Object.keys(sectors).sort((a,b) => a==='N' ? 1 : b==='N' ? -1 : Number(a)-Number(b));
+  const pills = keys.map(k => '<span class="pill">' + (k==='N' ? 'Neutral' : names[k]) + ': <b>' + sectors[k] + '</b></span>').join('');
+  document.getElementById('coll-summary').innerHTML = pills;
+
+  const grid = document.getElementById('coll-grid');
+  grid.innerHTML = paints.map(p =>
+    '<div class="paint-card" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="pickPaint(\'' + p.hex + '\')">' +
+    '<div class="bar" style="background:' + p.hex + '"></div>' +
+    '<div class="pname">' + esc(p.name) + '</div>' +
+    '<div class="ptype">' + p.type + '</div></div>').join('');
+}
+
+function pickPaint(hex) {
+  document.getElementById('target-hex').value = hex;
+  document.getElementById('target-picker').value = hex;
+  switchTab('mix');
+  doMix();
+}
+
+// ================= GAPS TAB =================
+function runGaps() {
+  const btn = document.getElementById('gaps-run');
+  btn.disabled = true;
+  btn.textContent = 'Analyzing…';
+  document.getElementById('gaps-list').innerHTML = '';
+  document.getElementById('gaps-note').textContent = 'Running ~200 mix searches…';
+
+  // Defer to let the UI paint
+  setTimeout(() => {
+    const mine = getPaints(true);
+    const results = [];
+    for (const target of ALL_PAINTS) {
+      const tLab = rgbToLab(hexToRgb(target.hex));
+      const best = findMix(mine, tLab, 2, 9);
+      results.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
+    }
+    results.sort((a,b) => b.dE - a.dE);
+    const worst = results.slice(0, 12);
+
+    const ownedSet = new Set(mine.map(p=>p.name));
+    const gapsList = document.getElementById('gaps-list');
+    gapsList.innerHTML = worst.map(r => {
+      const candidates = ALL_PAINTS.filter(p => !ownedSet.has(p.name))
+        .map(p => ({ name: p.name, hex: p.hex, d: deltaE2000(rgbToLab(hexToRgb(p.hex)), rgbToLab(hexToRgb(r.targetHex))) }))
+        .sort((a,b) => a.d - b.d)[0];
+      const mixStr = r.mix && r.mix.length ? r.mix.map(p=>p.name + ' ' + p.ratio + '%').join(' + ') : 'no mix found';
+      return '<div class="gap-item">' +
+        '<span class="swatch" style="background:' + r.targetHex + '"></span>' +
+        '<div class="gap-meta">' +
+        '<div class="gap-name">' + esc(r.target) + ' <span class="dE-bad">ΔE ' + r.dE.toFixed(1) + '</span></div>' +
+        '<div class="gap-rec">Best with collection: ' + esc(mixStr) + '</div>' +
+        '<div class="gap-rec">Would fix it: <b>' + esc(candidates.name) + '</b> (' + candidates.hex + ')</div>' +
+        '</div></div>';
+    }).join('');
+
+    btn.disabled = false;
+    btn.textContent = 'Run gap analysis';
+    document.getElementById('gaps-note').textContent = '';
+  }, 50);
+}
+
+// ================= TABS =================
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(t => t.style.display = t.id === 'tab-' + name ? '' : 'none');
+  if (name === 'collection') renderCollection();
+}
+
+// ================= EVENTS =================
+function doMix() {
+  const v = document.getElementById('target-hex').value;
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) renderMixResults(v);
+}
+
+document.getElementById('mix-btn').addEventListener('click', doMix);
+document.getElementById('target-hex').addEventListener('keydown', e => { if (e.key === 'Enter') doMix(); });
+document.getElementById('target-picker').addEventListener('input', e => {
+  document.getElementById('target-hex').value = e.target.value;
+  doMix();
+});
+document.getElementById('target-hex').addEventListener('input', e => {
+  const v = e.target.value;
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) { document.getElementById('target-picker').value = v; doMix(); }
+});
+document.getElementById('use-collection').addEventListener('change', () => { clearCache(); doMix(); });
+document.getElementById('gaps-run').addEventListener('click', runGaps);
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+// Initial render
+doMix();
+</script>
+</body>
+</html>
