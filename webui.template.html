@@ -91,6 +91,7 @@
   .paint-card .ptype { font-size: 0.65rem; color: var(--dim); }
   .gaps-list { display: grid; gap: 10px; }
   .gap-item { display: flex; align-items: center; gap: 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; flex-wrap: wrap; }
+  .gap-section-title { font-size: 1rem; font-weight: 600; margin-bottom: 10px; color: var(--text); }
   .gap-meta { flex: 1; min-width: 200px; }
   .gap-name { font-weight: 600; }
   .gap-rec { color: var(--dim); font-size: 0.8rem; margin-top: 3px; }
@@ -170,7 +171,7 @@
       <button id="gaps-run" class="secondary">Run gap analysis</button>
       <span class="mode-note" id="gaps-note"></span>
     </div>
-    <div class="note">Targets the full Fanatic line; shows colors your collection can't get close to, and the single unowned paint that would most improve coverage.</div>
+    <div class="note">Section 1: colors your collection can't reach. Section 2: top 3 paints that would most expand your mixing range (measured by total ΔE improvement across all 180 targets).</div>
     <div class="gaps-list" id="gaps-list" style="margin-top:14px"></div>
   </div>
 </div>
@@ -422,6 +423,9 @@ function runGaps() {
   // Defer to let the UI paint
   setTimeout(() => {
     const mine = getPaints(true);
+    const ownedSet = new Set(mine.map(p=>p.name));
+
+    // --- Section 1: Hardest colors to mix toward ---
     const results = [];
     for (const target of ALL_PAINTS) {
       const tLab = rgbToLab(hexToRgb(target.hex));
@@ -429,24 +433,54 @@ function runGaps() {
       results.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
     }
     results.sort((a,b) => b.dE - a.dE);
-    const worst = results.slice(0, 12);
+    const worst = results.slice(0, 8);
+    const totalDE = results.reduce((s,r) => s + r.dE, 0);
+    const avgDE = totalDE / results.length;
 
-    const ownedSet = new Set(mine.map(p=>p.name));
-    const gapsList = document.getElementById('gaps-list');
-    gapsList.innerHTML = worst.map(r => {
-      const candidates = ALL_PAINTS.filter(p => !ownedSet.has(p.name))
-        .map(p => ({ name: p.name, hex: p.hex, d: deltaE2000(rgbToLab(hexToRgb(p.hex)), rgbToLab(hexToRgb(r.targetHex))) }))
-        .sort((a,b) => a.d - b.d)[0];
+    let html = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all 180: ' + avgDE.toFixed(1) + ')</span></div>';
+    html += worst.map(r => {
       const mixStr = r.mix && r.mix.length ? r.mix.map(p=>p.name + ' ' + p.ratio + '%').join(' + ') : 'no mix found';
       return '<div class="gap-item">' +
         '<span class="swatch" style="background:' + r.targetHex + '"></span>' +
         '<div class="gap-meta">' +
         '<div class="gap-name">' + esc(r.target) + ' <span class="dE-bad">ΔE ' + r.dE.toFixed(1) + '</span></div>' +
         '<div class="gap-rec">Best with collection: ' + esc(mixStr) + '</div>' +
-        '<div class="gap-rec">Would fix it: <b>' + esc(candidates.name) + '</b> (' + candidates.hex + ')</div>' +
         '</div></div>';
     }).join('');
 
+    // --- Section 2: Top paints that would most expand mixing range ---
+    html += '<div class="gap-section-title" style="margin-top:20px">Top 3 paints to add</div>';
+    html += '<div class="note" style="margin-bottom:10px">Each candidate is simulated as an addition to your collection. "Impact" = total ΔE improvement across all 180 targets vs. your current collection.</div>';
+
+    const unowned = ALL_PAINTS.filter(p => !ownedSet.has(p.name));
+    const baseTotal = totalDE; // current total ΔE
+    const improvements = [];
+
+    for (const candidate of unowned) {
+      // Build augmented collection
+      const augPaints = mine.concat([{ ...candidate, rgb: hexToRgb(candidate.hex), lab: rgbToLab(hexToRgb(candidate.hex)) }]);
+      let augTotal = 0;
+      for (const target of ALL_PAINTS) {
+        const tLab = rgbToLab(hexToRgb(target.hex));
+        const best = findMix(augPaints, tLab, 2, 9);
+        augTotal += best.dE;
+      }
+      improvements.push({ name: candidate.name, hex: candidate.hex, type: candidate.type, improvement: baseTotal - augTotal, newAvg: augTotal / ALL_PAINTS.length });
+    }
+    improvements.sort((a,b) => b.improvement - a.improvement);
+    const top3 = improvements.slice(0, 3);
+
+    html += top3.map(r => {
+      const pct = ((r.improvement / baseTotal) * 100).toFixed(1);
+      return '<div class="gap-item">' +
+        '<span class="swatch" style="background:' + r.hex + '"></span>' +
+        '<div class="gap-meta">' +
+        '<div class="gap-name">' + esc(r.name) + ' (' + r.type + ')</div>' +
+        '<div class="gap-rec">Impact: <b>+' + r.improvement.toFixed(1) + '</b> total ΔE improvement (' + pct + '%) · new avg ΔE: ' + r.newAvg.toFixed(1) + '</div>' +
+        '</div></div>';
+    }).join('');
+
+    document.getElementById('gaps-list').innerHTML = html;
     btn.disabled = false;
     btn.textContent = 'Run gap analysis';
     document.getElementById('gaps-note').textContent = '';
