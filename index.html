@@ -663,16 +663,16 @@ function renderMixResults(targetHex) {
 
 // Generate cycle button for a recommended paint in gap/coverage results
 function gapActions(name) {
-  const safeName = esc(name).replace(/'/g, "\\'");
   const owned = COLLECTION_NAMES.has(name);
   const wished = WISHLIST_NAMES.has(name);
   let cls = 'is-unowned', label = '○';
   if (owned) { cls = 'is-owned'; label = '✓'; }
   else if (wished) { cls = 'is-wished'; label = '★'; }
-  return '<div class="gap-actions" data-paint="' + esc(name) + '"><div class="gap-cycle ' + cls + '" onclick="gapCycle(\'' + safeName + '\')" title="Click to cycle: unowned → wishlist → owned">' + label + '</div></div>';
+  return '<div class="gap-actions" data-paint="' + esc(name) + '"><div class="gap-cycle ' + cls + '" data-paint="' + esc(name) + '" title="Cycle: unowned → wishlist → owned">' + label + '</div></div>';
 }
 
 // 3-state cycle from gap tab (same as browse: unowned → wishlist → owned → unowned)
+// Uses event delegation — no inline onclick to avoid quote-escaping issues
 function gapCycle(name) {
   if (COLLECTION_NAMES.has(name)) {
     COLLECTION_NAMES.delete(name);
@@ -689,6 +689,22 @@ function gapCycle(name) {
   renderCollection();
   renderBrowse();
 }
+
+// Event delegation for gap-cycle buttons and paint cards
+// Avoids inline onclick to prevent quote-escaping issues (e.g. Payne's Grey)
+document.addEventListener('click', function(e) {
+  const gapTarget = e.target.closest('.gap-cycle[data-paint]');
+  if (gapTarget) {
+    e.stopPropagation();
+    gapCycle(gapTarget.getAttribute('data-paint'));
+    return;
+  }
+  const cardTarget = e.target.closest('.paint-card[data-paint]');
+  if (cardTarget) {
+    cyclePaintState(cardTarget.getAttribute('data-paint'));
+    return;
+  }
+});
 
 // Update all gap-action buttons in place without re-running analysis
 function refreshGapActions() {
@@ -721,7 +737,7 @@ function renderCollection() {
   document.getElementById('coll-summary').innerHTML = pills;
   const grid = document.getElementById('coll-grid');
   grid.innerHTML = paints.map(p =>
-    '<div class="paint-card owned" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="cyclePaintState(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">' +
+    '<div class="paint-card owned" data-paint="' + esc(p.name) + '" title="' + esc(p.name) + ' (' + p.hex + ')">' +
     '<div class="check">✓</div><div class="bar" style="background:' + p.hex + '"></div>' +
     '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + '</div>' +
     '<div class="state-badge">✓</div></div>').join('');
@@ -740,7 +756,7 @@ function renderWishlist() {
     return;
   }
   wishGrid.innerHTML = wishPaints.map(p =>
-    '<div class="paint-card wishlist" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="cyclePaintState(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">' +
+    '<div class="paint-card wishlist" data-paint="' + esc(p.name) + '" title="' + esc(p.name) + ' (' + p.hex + ')">' +
     '<div class="wishlist-mark">★</div><div class="bar" style="background:' + p.hex + '"></div>' +
     '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div>' +
     '<div class="state-badge">★</div></div>').join('');
@@ -795,9 +811,8 @@ function renderBrowse() {
     let cls = 'paint-card';
     if (p.owned) cls += ' owned';
     else if (p.wished) cls += ' wishlist';
-    const safeName = esc(p.name).replace(/'/g, "\\'");
     const stateLabel = p.owned ? '✓' : (p.wished ? '★' : '○');
-    return '<div class="' + cls + '" onclick="cyclePaintState(\'' + safeName + '\')">' +
+    return '<div class="' + cls + '" data-paint="' + esc(p.name) + '">' +
       '<div class="check">✓</div><div class="wishlist-mark">★</div>' +
       '<div class="bar" style="background:' + p.hex + '"></div>' +
       '<div class="pname">' + esc(p.name) + '</div>' +
