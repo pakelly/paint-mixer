@@ -759,15 +759,16 @@ function runGaps() {
     `// Phase 2: Greedy sequential selection
     const picks = [];
     for (let round = 0; round < DEPTH; round++) {
-      // Re-compute current gaps
+      // Re-evaluate only worst 60 targets (speed: adding 1 paint won't help already-good targets)
+      const prevWorst = results.slice(0, 60);  // from baseline or previous round
       const currentResults = [];
-      for (let i = 0; i < PAINTS.length; i++) {
-        const target = PAINTS[i];
-        const tLab = rgbToLab(hexToRgb(target.hex));
+      for (let i = 0; i < prevWorst.length; i++) {
+        const target = prevWorst[i];
+        const tLab = rgbToLab(hexToRgb(target.targetHex || target.hex));
         let best = findMix(mine, tLab, MIX_DEPTH, 5);
         best = valueAdjust(best, mine, tLab);
-        currentResults.push({ target: target.name, targetHex: target.hex, dE: best.dE });
-        if (i % 20 === 0) self.postMessage({ type: 'progress', progress: 30 + (round / DEPTH) * 10, text: 'Round ' + (round+1) + '/' + DEPTH + ' — re-evaluating gaps (' + (i+1) + '/' + PAINTS.length + ')' });
+        currentResults.push({ target: target.target || target.name, targetHex: target.targetHex || target.hex, dE: best.dE });
+        if (i % 10 === 0) self.postMessage({ type: 'progress', progress: 30 + (round / DEPTH) * 10, text: 'Round ' + (round+1) + '/' + DEPTH + ' — re-evaluating gaps (' + (i+1) + '/' + prevWorst.length + ')' });
       }
       currentResults.sort((a,b) => b.dE - a.dE);
       const currentWorst = currentResults.slice(0, 8);
@@ -784,19 +785,23 @@ function runGaps() {
       scored.sort((a,b) => a.score - b.score);
       const candidates = scored.slice(0, 25);
 
-      // Test each candidate
+      // Test each candidate — only against worst 40 targets (speed optimization)
+      const worst40 = currentResults.slice(0, 40);
+      const worst40Total = worst40.reduce((s,r) => s + r.dE, 0);
       const improvements = [];
       for (let ci = 0; ci < candidates.length; ci++) {
         const c = candidates[ci];
         const aug = mine.concat([{ name: c.name, hex: c.hex, type: c.type, brand: c.brand, rgb: hexToRgb(c.hex), lab: rgbToLab(hexToRgb(c.hex)) }]);
         let augTotal = 0;
-        for (const target of PAINTS) {
-          const tLab = rgbToLab(hexToRgb(target.hex));
+        for (const target of worst40) {
+          const tLab = rgbToLab(hexToRgb(target.targetHex));
           let best = findMix(aug, tLab, MIX_DEPTH, 5);
           best = valueAdjust(best, aug, tLab);
           augTotal += best.dE;
         }
-        improvements.push({ name: c.name, hex: c.hex, type: c.type, brand: c.brand, improvement: currentTotal - augTotal, newAvg: augTotal / PAINTS.length });
+        // Scale to full line for approximate avg
+        const scaledAvg = (augTotal / worst40.length);
+        improvements.push({ name: c.name, hex: c.hex, type: c.type, brand: c.brand, improvement: worst40Total - augTotal, newAvg: scaledAvg, approx: true });
         const pct = 40 + (round / DEPTH) * 60 + ((ci + 1) / candidates.length) * (60 / DEPTH);
         self.postMessage({ type: 'progress', progress: pct, text: 'Round ' + (round+1) + '/' + DEPTH + ' — candidate ' + (ci+1) + '/' + candidates.length + ' (' + c.name + ')' });
       }
