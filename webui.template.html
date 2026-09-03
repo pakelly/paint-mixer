@@ -794,7 +794,7 @@ function runCoverage() {
       const best = findMixHue(collPaints, gp.lab, gp.h);
       const isCov = best.dE < THRESHOLD;
       if (isCov) covered++;
-      else uncovered.push({ h: gp.h, s: gp.s, v: gp.v, dE: best.dE });
+      else uncovered.push({ h: gp.h, s: gp.s, v: gp.v, lab: gp.lab, dE: best.dE });
       const hb = Math.floor(gp.h / 30) * 30;
       if (!covByHue[hb]) covByHue[hb] = { total: 0, covered: 0 };
       covByHue[hb].total++;
@@ -858,7 +858,7 @@ function runCoverage() {
       summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
         '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncoveredCount + '</div>';
       worstEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Hardest gaps</div>' +
-        msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + (p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
+        msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + Math.round(p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
       greedyEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Recommended paints to add</div><div class="note" style="margin-bottom:8px">Live leaderboard — updates after each candidate.</div><div id="cov-greedy-list"></div>';
     }
 
