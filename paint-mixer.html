@@ -206,11 +206,21 @@
   <div class="panel">
     <h2>Collection analysis</h2>
     <div class="row" style="margin-bottom:12px">
+      <div class="field">
+        <label>Recommendations</label>
+        <select id="gaps-depth">
+          <option value="1">1 paint</option>
+          <option value="2">2 paints</option>
+          <option value="3" selected>3 paints</option>
+          <option value="4">4 paints</option>
+          <option value="5">5 paints</option>
+        </select>
+      </div>
       <button id="gaps-run" class="secondary">Run analysis</button>
       <span class="mode-note" id="gaps-note"></span>
     </div>
     <div class="progress-bar" id="gaps-progress" style="display:none"><div class="progress-fill" id="gaps-progress-fill" style="width:0%"></div></div>
-    <div class="note">Section 1: colors your collection can't reach. Section 2: top 3 paints that would most expand your mixing range. Uses coarse filter (top 25 candidates by gap proximity) + fast grid for speed.</div>
+    <div class="note">Section 1: colors your collection can't reach. Section 2: recommended paints to add, chosen greedily — each pick is the best single paint for the remaining gaps after previous picks. Uses coarse filter + fast grid.</div>
     <div class="gaps-list" id="gaps-list" style="margin-top:14px"></div>
   </div>
 </div>
@@ -467,9 +477,10 @@ function togglePaint(name) {
   if (document.getElementById('coll-grid').innerHTML) renderCollection();
 }
 
-// ================= GAPS TAB (optimized) =================
+// ================= GAPS TAB (greedy sequential) =================
 function runGaps() {
   const btn = document.getElementById('gaps-run');
+  const depth = parseInt(document.getElementById('gaps-depth').value);
   btn.disabled = true;
   btn.textContent = 'Analyzing…';
   document.getElementById('gaps-list').innerHTML = '';
@@ -480,71 +491,96 @@ function runGaps() {
   progressFill.style.width = '0%';
 
   setTimeout(() => {
-    const mine = getPaints(true);
-    const ownedSet = new Set(mine.map(p=>p.name));
+    const tStart = performance.now();
+    let mine = getPaints(true);
+    let ownedSet = new Set(mine.map(p=>p.name));
 
-    // --- Section 1: Baseline (grid=5 for speed, 180 searches) ---
+    // --- Section 1: Baseline ---
     const results = [];
     for (let i = 0; i < ALL_PAINTS.length; i++) {
       const target = ALL_PAINTS[i];
       const tLab = rgbToLab(hexToRgb(target.hex));
       const best = findMix(mine, tLab, 2, 5);
       results.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
-      if (i % 20 === 0) {
-        progressFill.style.width = (i / ALL_PAINTS.length * 50) + '%';
-      }
+      if (i % 20 === 0) progressFill.style.width = (i / ALL_PAINTS.length * 30) + '%';
     }
     results.sort((a,b) => b.dE - a.dE);
     const worst = results.slice(0, 8);
-    const totalDE = results.reduce((s,r) => s + r.dE, 0);
-    const avgDE = totalDE / results.length;
+    let currentTotal = results.reduce((s,r) => s + r.dE, 0);
+    const baseAvgDE = currentTotal / results.length;
+    const baseTotal = currentTotal;
 
-    let html = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + ALL_PAINTS.length + ': ' + avgDE.toFixed(1) + ')</span></div>';
+    let html = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + ALL_PAINTS.length + ': ' + baseAvgDE.toFixed(2) + ')</span></div>';
     html += worst.map(r => {
       const mixStr = r.mix && r.mix.length ? r.mix.map(p=>p.name + ' ' + p.ratio + '%').join(' + ') : 'no mix found';
       return '<div class="gap-item"><span class="swatch" style="background:' + r.targetHex + '"></span><div class="gap-meta"><div class="gap-name">' + esc(r.target) + ' <span class="dE-bad">ΔE ' + r.dE.toFixed(1) + '</span></div><div class="gap-rec">Best with collection: ' + esc(mixStr) + '</div></div></div>';
     }).join('');
 
-    // --- Section 2: Top paints to add (coarse filter + fast grid) ---
-    // Coarse filter: rank unowned paints by how close they are to the worst gap targets.
-    // Only test the top 25 candidates fully instead of all ~146.
-    const unowned = ALL_PAINTS.filter(p => !ownedSet.has(p.name));
-    const worstTargets = worst.map(w => ({ name: w.target, hex: w.targetHex, lab: rgbToLab(hexToRgb(w.targetHex)) }));
+    // --- Section 2: Greedy sequential selection ---
+    html += '<div class="gap-section-title" style="margin-top:20px">Recommended paints to add</div>';
+    html += '<div class="note" style="margin-bottom:10px">Each pick is the best single paint for the remaining gaps after previous picks (greedy sequential). Coarse filter: top 25 candidates per round.</div>';
 
-    // Score each unowned paint by average ΔE to the 8 worst targets (lower = better candidate)
-    const scored = unowned.map(p => {
-      const pLab = rgbToLab(hexToRgb(p.hex));
-      const avgDist = worstTargets.reduce((s,t) => s + deltaE2000(pLab, t.lab), 0) / worstTargets.length;
-      return { name: p.name, hex: p.hex, type: p.type, score: avgDist };
-    });
-    scored.sort((a,b) => a.score - b.score);
-    const candidates = scored.slice(0, 25); // test top 25
+    const picks = [];
+    const totalRounds = depth;
 
-    html += '<div class="gap-section-title" style="margin-top:20px">Top 3 paints to add</div>';
-    html += '<div class="note" style="margin-bottom:10px">Testing top 25 of ' + unowned.length + ' unowned paints (filtered by proximity to worst gaps). Each simulated as addition to your collection.</div>';
-
-    const improvements = [];
-    const candidateCount = candidates.length;
-    for (let ci = 0; ci < candidateCount; ci++) {
-      const candidate = candidates[ci];
-      const augPaints = mine.concat([{ name: candidate.name, hex: candidate.hex, type: candidate.type, rgb: hexToRgb(candidate.hex), lab: rgbToLab(hexToRgb(candidate.hex)) }]);
-      let augTotal = 0;
+    for (let round = 0; round < totalRounds; round++) {
+      // Re-compute current gaps with augmented collection
+      const currentResults = [];
       for (const target of ALL_PAINTS) {
         const tLab = rgbToLab(hexToRgb(target.hex));
-        const best = findMix(augPaints, tLab, 2, 5);
-        augTotal += best.dE;
+        const best = findMix(mine, tLab, 2, 5);
+        currentResults.push({ target: target.name, targetHex: target.hex, dE: best.dE });
       }
-      improvements.push({ name: candidate.name, hex: candidate.hex, type: candidate.type, improvement: totalDE - augTotal, newAvg: augTotal / ALL_PAINTS.length });
-      progressFill.style.width = (50 + (ci + 1) / candidateCount * 50) + '%';
-      document.getElementById('gaps-note').textContent = 'Testing candidate ' + (ci+1) + '/' + candidateCount + '…';
-    }
-    improvements.sort((a,b) => b.improvement - a.improvement);
-    const top3 = improvements.slice(0, 3);
+      currentResults.sort((a,b) => b.dE - a.dE);
+      const currentWorst = currentResults.slice(0, 8);
+      currentTotal = currentResults.reduce((s,r) => s + r.dE, 0);
 
-    html += top3.map(r => {
-      const pct = ((r.improvement / totalDE) * 100).toFixed(1);
-      return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">' + esc(r.name) + ' (' + r.type + ')</div><div class="gap-rec">Impact: <b>+' + r.improvement.toFixed(1) + '</b> total ΔE improvement (' + pct + '%) · new avg ΔE: ' + r.newAvg.toFixed(1) + '</div></div></div>';
+      // Coarse filter: rank unowned by proximity to current worst gaps
+      const unowned = ALL_PAINTS.filter(p => !ownedSet.has(p.name));
+      const worstLabs = currentWorst.map(w => rgbToLab(hexToRgb(w.targetHex)));
+      const scored = unowned.map(p => {
+        const pLab = rgbToLab(hexToRgb(p.hex));
+        const avgDist = worstLabs.reduce((s,t) => s + deltaE2000(pLab, t), 0) / worstLabs.length;
+        return { name: p.name, hex: p.hex, type: p.type, score: avgDist };
+      });
+      scored.sort((a,b) => a.score - b.score);
+      const candidates = scored.slice(0, 25);
+
+      // Test each candidate
+      const improvements = [];
+      for (let ci = 0; ci < candidates.length; ci++) {
+        const c = candidates[ci];
+        const aug = mine.concat([{ name: c.name, hex: c.hex, type: c.type, rgb: hexToRgb(c.hex), lab: rgbToLab(hexToRgb(c.hex)) }]);
+        let augTotal = 0;
+        for (const target of ALL_PAINTS) {
+          const tLab = rgbToLab(hexToRgb(target.hex));
+          const best = findMix(aug, tLab, 2, 5);
+          augTotal += best.dE;
+        }
+        improvements.push({ name: c.name, hex: c.hex, type: c.type, improvement: currentTotal - augTotal, newAvg: augTotal / ALL_PAINTS.length });
+        const pct = 30 + (round / totalRounds) * 70 + ((ci + 1) / candidates.length) * (70 / totalRounds);
+        progressFill.style.width = pct + '%';
+        document.getElementById('gaps-note').textContent = 'Round ' + (round+1) + '/' + totalRounds + ' — testing candidate ' + (ci+1) + '/' + candidates.length + '…';
+      }
+      improvements.sort((a,b) => b.improvement - a.improvement);
+      const best = improvements[0];
+
+      if (!best || best.improvement <= 0) break;
+
+      picks.push(best);
+      // Add to collection for next round
+      mine = mine.concat([{ name: best.name, hex: best.hex, type: best.type, rgb: hexToRgb(best.hex), lab: rgbToLab(hexToRgb(best.hex)) }]);
+      ownedSet.add(best.name);
+    }
+
+    html += picks.map((r, i) => {
+      const pct = ((r.improvement / baseTotal) * 100).toFixed(1);
+      const label = i === 0 ? '1st pick' : i === 1 ? '2nd pick' : i === 2 ? '3rd pick' : (i+1) + 'th pick';
+      return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">' + label + ': ' + esc(r.name) + ' (' + r.type + ')</div><div class="gap-rec">Impact: <b>+' + r.improvement.toFixed(1) + '</b> total ΔE (' + pct + '%) · avg ΔE after this pick: ' + r.newAvg.toFixed(2) + '</div></div></div>';
     }).join('');
+
+    const totalMs = Math.round(performance.now() - tStart);
+    html += '<div class="note" style="margin-top:8px">Analysis completed in ' + (totalMs/1000).toFixed(1) + 's</div>';
 
     document.getElementById('gaps-list').innerHTML = html;
     btn.disabled = false;
