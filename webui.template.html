@@ -286,6 +286,7 @@
 // ================= DATA =================
 const ALL_PAINTS = /*__PAINTS__*/;
 const SEED_COLLECTION = /*__COLLECTION__*/;
+const PRECOMPUTED_GAMUT = /*__GAMUT__*/;
 
 // Collection persistence via localStorage
 function loadCollection() {
@@ -728,79 +729,10 @@ function runGaps() {
   }, 50);
 }
 
-// ================= COVERAGE TAB (progressive async) =================
-const COV_HUE_STEPS = 24, COV_SAT_STEPS = 10, COV_VAL_STEPS = 10;
-const COV_THRESHOLD = 3; // ΔE < 3 = covered
-const COV_HUE_CHUNK = 4; // process 4 hue slices per chunk
+// ================= COVERAGE TAB (Web Worker + precomputed gamut) =================
+const COV_THRESHOLD = 3;
 
-function hsvToRgb(h, s, v) {
-  h = h / 360;
-  const i = Math.floor(h * 6), f = h * 6 - i;
-  const p = v*(1-s), q = v*(1-f*s), t = v*(1-(1-f)*s);
-  switch(i%6){case 0:return[v,t,p];case 1:return[q,v,p];case 2:return[p,v,t];case 3:return[p,q,v];case 4:return[t,p,v];default:return[v,p,q];}
-}
-
-function mix2rgbLin(a, b, r) {
-  return [
-    Math.pow(a.rgb[0], r) * Math.pow(b.rgb[0], 1-r),
-    Math.pow(a.rgb[1], r) * Math.pow(b.rgb[1], 1-r),
-    Math.pow(a.rgb[2], r) * Math.pow(b.rgb[2], 1-r),
-  ];
-}
-
-function findMixHue(paintSet, targetLab, targetHue) {
-  // Prefilter: top 35 candidates by hue proximity
-  const candidates = paintSet
-    .map(p => ({ p, hd: Math.min(Math.abs(p.hsv[0]-targetHue), 360-Math.abs(p.hsv[0]-targetHue)) }))
-    .sort((a,b) => a.hd - b.hd)
-    .slice(0, Math.min(35, paintSet.length))
-    .map(x => x.p);
-  let best = { dE: 999 };
-  for (let i = 0; i < candidates.length; i++) {
-    for (let j = i+1; j < candidates.length; j++) {
-      for (let r = 0.15; r <= 0.85; r += 0.1) {
-        const mixLab = rgbToLab(mix2rgbLin(candidates[i], candidates[j], r));
-        const dE = deltaE2000(mixLab, targetLab);
-        if (dE < best.dE) {
-          let bR = r, bD = dE;
-          for (let r2 = Math.max(0.05, r-0.08); r2 <= Math.min(0.95, r+0.08); r2 += 0.02) {
-            const m2 = rgbToLab(mix2rgbLin(candidates[i], candidates[j], r2));
-            const d2 = deltaE2000(m2, targetLab);
-            if (d2 < bD) { bD = d2; bR = r2; }
-          }
-          best = { dE: bD, paints: [candidates[i], candidates[j]] };
-        }
-      }
-    }
-  }
-  // Value adjustment
-  const sorted = [...paintSet].sort((a,b) => a.lab[0] - b.lab[0]);
-  const darkest = sorted[0], lightest = sorted[sorted.length-1];
-  const baseNames = new Set(best.paints ? best.paints.map(p=>p.name) : []);
-  for (const mod of [darkest, lightest]) {
-    if (!mod || baseNames.has(mod.name) || !best.paints) continue;
-    for (let frac = 0.02; frac <= 0.35; frac += 0.04) {
-      const [a, b] = best.paints;
-      for (let ra = 0.2; ra <= 0.8; ra += 0.15) {
-        const rb = 1 - frac - ra*0.5;
-        if (rb <= 0 || rb > 1) continue;
-        const rgb = [
-          Math.pow(a.rgb[0], ra) * Math.pow(b.rgb[0], rb) * Math.pow(mod.rgb[0], frac),
-          Math.pow(a.rgb[1], ra) * Math.pow(b.rgb[1], rb) * Math.pow(mod.rgb[1], frac),
-          Math.pow(a.rgb[2], ra) * Math.pow(b.rgb[2], rb) * Math.pow(mod.rgb[2], frac),
-        ];
-        const mixLab = rgbToLab(rgb);
-        const dE = deltaE2000(mixLab, targetLab);
-        if (dE < best.dE) best = { dE, paints: [a, b, mod] };
-      }
-    }
-  }
-  return best;
-}
-
-function yieldToUI() { return new Promise(r => setTimeout(r, 0)); }
-
-async function runCoverage() {
+function runCoverage() {
   const btn = document.getElementById('cov-run');
   const note = document.getElementById('cov-note');
   const progressBar = document.getElementById('cov-progress');
@@ -819,175 +751,163 @@ async function runCoverage() {
   greedyEl.innerHTML = '';
   worstEl.innerHTML = '';
 
-  // Prep paint data with HSV
-  const allPaints = ALL_PAINTS.map(p => {
-    const rgb = hexToRgb(p.hex);
-    return { ...p, rgb, lab: rgbToLab(rgb), hsv: hsvOf(rgb) };
-  });
-  const collPaints = allPaints.filter(p => COLLECTION_NAMES.has(p.name));
-  const collSet = new Set(collPaints.map(p => p.name));
+  // Build worker code as inline blob
+  const workerCode = [
+    'const PAINTS = ' + JSON.stringify(ALL_PAINTS.map(p => ({ name: p.name, hex: p.hex, brand: p.brand, type: p.type }))) + ';',
+    'const GAMUT = ' + JSON.stringify(PRECOMPUTED_GAMUT) + ';',
+    'const THRESHOLD = ' + COV_THRESHOLD + ';',
+    'const COLLECTION = ' + JSON.stringify([...COLLECTION_NAMES]) + ';',
 
-  note.textContent = 'Phase 1: Defining achievable gamut…';
+    `function hexToRgb(hex){const h=hex.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
+    function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
+    function rgbToXyz(rgb){const[r,g,b]=[srgbToLinear(rgb[0]),srgbToLinear(rgb[1]),srgbToLinear(rgb[2])];return[r*0.4124+g*0.3576+b*0.1805,r*0.2126+g*0.7152+b*0.0722,r*0.0193+g*0.1192+b*0.9505];}
+    function xyzToLab([X,Y,Z]){const Xn=0.95047,Yn=1.0,Zn=1.08883;const f=t=>t>0.008856?Math.cbrt(t):(7.787*t+16/116);return[116*f(X/Xn)-16,500*(f(X/Xn)-f(Y/Yn)),200*(f(Y/Yn)-f(Z/Zn))];}
+    function rgbToLab(rgb){return xyzToLab(rgbToXyz(rgb));}
+    function rgbToHsv([r,g,b]){const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;if(d!==0){if(max===r)h=60*((g-b)/d%6);else if(max===g)h=60*((b-r)/d+2);else h=60*((r-g)/d+4);}if(h<0)h+=360;return[h,max===0?0:d/max,max];}
+    function ciede2000(l1,l2){const[L1,a1,b1]=l1,[L2,a2,b2]=l2;const C1=Math.hypot(a1,b1),C2=Math.hypot(a2,b2);const Cbar=(C1+C2)/2,Cbar7=Math.pow(Cbar,7);const G=0.5*(1-Math.sqrt(Cbar7/(Cbar7+Math.pow(25,7))));const a1p=a1*(1+G),a2p=a2*(1+G);const C1p=Math.hypot(a1p,b1),C2p=Math.hypot(a2p,b2);let h1p=Math.atan2(b1,a1p)*180/Math.PI;if(h1p<0)h1p+=360;let h2p=Math.atan2(b2,a2p)*180/Math.PI;if(h2p<0)h2p+=360;const dLp=L2-L1,dCp=C2p-C1p;let dhp=0;if(C1p*C2p!==0){let d=h2p-h1p;if(d>180)d-=360;else if(d<-180)d+=360;dhp=d;}const dHp=2*Math.sqrt(C1p*C2p)*Math.sin(dhp*Math.PI/360);const Lbarp=(L1+L2)/2,Cbarp=(C1p+C2p)/2;let hbarp=0;if(C1p*C2p!==0){hbarp=(h1p+h2p)/2;if(Math.abs(h1p-h2p)>180){if(h1p+h2p<360)hbarp+=180;else hbarp-=180;}}const T=1-0.17*Math.cos((hbarp-30)*Math.PI/180)+0.24*Math.cos(2*hbarp*Math.PI/180)-0.32*Math.cos((3*hbarp+6)*Math.PI/180)-0.20*Math.cos((4*hbarp-63)*Math.PI/180);const dTheta=30*Math.exp(-Math.pow((hbarp-275)/25,2));const RC=2*Math.sqrt(Math.pow(Cbarp,7)/(Math.pow(Cbarp,7)+Math.pow(25,7)));const SL=1+(0.015*Math.pow(Lbarp-50,2))/Math.sqrt(20+Math.pow(Lbarp-50,2));const SC=1+0.045*Cbarp;const SH=1+0.015*Cbarp*T;const RT=-Math.sin(2*dTheta*Math.PI/180)*RC;const dLpSL=dLp/SL,dCpSC=dCp/SC,dHpSH=dHp/SH;return Math.sqrt(dLpSL*dLpSL+dCpSC*dCpSC+dHpSH*dHpSH+RT*dCpSC*dHpSH);}
+    function mix2rgbLin(a,b,r){return[Math.pow(a.rgb[0],r)*Math.pow(b.rgb[0],1-r),Math.pow(a.rgb[1],r)*Math.pow(b.rgb[1],1-r),Math.pow(a.rgb[2],r)*Math.pow(b.rgb[2],1-r)];}`,
 
-  // Build grid points
-  const gridPoints = [];
-  for (let h = 0; h < COV_HUE_STEPS; h++)
-    for (let s = 0; s < COV_SAT_STEPS; s++)
-      for (let v = 0; v < COV_VAL_STEPS; v++) {
-        const hue = (h / COV_HUE_STEPS) * 360;
-        const sat = (s + 1) / COV_SAT_STEPS;
-        const val = (v + 1) / COV_VAL_STEPS;
-        const rgb = hsvToRgb(hue, sat, val);
-        gridPoints.push({ hue, sat, val, lab: rgbToLab(rgb) });
+    `const allPaints = PAINTS.map(p=>{const rgb=hexToRgb(p.hex);return{...p,rgb,lab:rgbToLab(rgb),hsv:rgbToHsv(rgb)};});
+    const collNames = new Set(COLLECTION);
+    const collPaints = allPaints.filter(p => collNames.has(p.name));`,
+
+    `function findMixHue(paintSet, targetLab, targetHue) {
+      const candidates = paintSet.map(p=>({p,hd:Math.min(Math.abs(p.hsv[0]-targetHue),360-Math.abs(p.hsv[0]-targetHue))})).sort((a,b)=>a.hd-b.hd).slice(0,Math.min(30,paintSet.length)).map(x=>x.p);
+      let best = { dE: 999 };
+      for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++)for(let r=0.15;r<=0.85;r+=0.1){
+        const mixLab=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r));const dE=ciede2000(mixLab,targetLab);
+        if(dE<best.dE){for(let r2=Math.max(0.05,r-0.08);r2<=Math.min(0.95,r+0.08);r2+=0.02){const m2=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r2));const d2=ciede2000(m2,targetLab);if(d2<best.dE)best={dE:d2};}best={dE:best.dE<999?best.dE:dE};}
       }
+      return best;
+    }`,
 
-  // Phase 1: Gamut (chunked by hue)
-  const achievablePoints = [];
-  const gamutByHue = {};
-  for (let chunk = 0; chunk < COV_HUE_STEPS; chunk += COV_HUE_CHUNK) {
-    const end = Math.min(chunk + COV_HUE_CHUNK, COV_HUE_STEPS);
-    for (let h = chunk; h < end; h++) {
-      for (let s = 0; s < COV_SAT_STEPS; s++) {
-        for (let v = 0; v < COV_VAL_STEPS; v++) {
-          const idx = h * COV_SAT_STEPS * COV_VAL_STEPS + s * COV_VAL_STEPS + v;
-          const gp = gridPoints[idx];
-          const best = findMixHue(allPaints, gp.lab, gp.hue);
-          if (best.dE < COV_THRESHOLD) {
-            achievablePoints.push(gp);
-            const hb = Math.floor(gp.hue / 30) * 30;
-            if (!gamutByHue[hb]) gamutByHue[hb] = 0;
-            gamutByHue[hb]++;
-          }
-        }
-      }
-    }
-    progressFill.style.width = (chunk / COV_HUE_STEPS * 50) + '%';
-    note.textContent = 'Phase 1: Gamut — hue ' + (chunk*15) + '°-' + (end*15) + '° (' + achievablePoints.length + ' achievable so far)';
-    // Live gamut chart
-    renderHueChart(hueChartEl, gamutByHue, {}, true);
-    await yieldToUI();
-  }
+    `// Phase 1: Gamut is precomputed - send immediately
+    self.postMessage({ type: 'gamut', gamut: GAMUT, totalGrid: 2400 });
 
-  const gamutPct = (achievablePoints.length / gridPoints.length * 100).toFixed(1);
-  summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + achievablePoints.length + '</b> colors (' + gamutPct + '% of HSV space) — defined by what the full ' + allPaints.length + '-paint line can reach at ΔE &lt; ' + COV_THRESHOLD + '</div>';
-
-  // Phase 2: Collection coverage (chunked by hue)
-  note.textContent = 'Phase 2: Measuring your collection…';
-  let covered = 0;
-  const uncoveredPoints = [];
-  const covByHue = {};
-  for (let chunk = 0; chunk < COV_HUE_STEPS; chunk += COV_HUE_CHUNK) {
-    // Filter achievable points in this hue range
-    const chunkStart = chunk * 15;
-    const chunkEnd = (Math.min(chunk + COV_HUE_CHUNK, COV_HUE_STEPS)) * 15;
-    const chunkPoints = achievablePoints.filter(p => p.hue >= chunkStart && p.hue < chunkEnd);
-    for (const gp of chunkPoints) {
-      const best = findMixHue(collPaints, gp.lab, gp.hue);
-      const isCov = best.dE < COV_THRESHOLD;
+    // Phase 2: Collection coverage (chunked)
+    let covered = 0;
+    const uncovered = [];
+    const covByHue = {};
+    const CHUNK = 80;
+    for (let i = 0; i < GAMUT.length; i++) {
+      const gp = GAMUT[i];
+      const best = findMixHue(collPaints, gp.lab, gp.h);
+      const isCov = best.dE < THRESHOLD;
       if (isCov) covered++;
-      else uncoveredPoints.push({ ...gp, dE: best.dE });
-      const hb = Math.floor(gp.hue / 30) * 30;
+      else uncovered.push({ h: gp.h, s: gp.s, v: gp.v, dE: best.dE });
+      const hb = Math.floor(gp.h / 30) * 30;
       if (!covByHue[hb]) covByHue[hb] = { total: 0, covered: 0 };
       covByHue[hb].total++;
       if (isCov) covByHue[hb].covered++;
+      if (i % CHUNK === 0 || i === GAMUT.length - 1) {
+        self.postMessage({ type: 'coverage-progress', covered, total: GAMUT.length, uncovered: uncovered.length, covByHue, index: i + 1 });
+      }
     }
-    progressFill.style.width = (50 + chunk / COV_HUE_STEPS * 30) + '%';
-    const covPct = (covered / achievablePoints.length * 100).toFixed(1);
-    note.textContent = 'Phase 2: Coverage — ' + covered + '/' + achievablePoints.length + ' covered (' + covPct + '%)';
-    // Live coverage chart + summary
-    renderHueChart(hueChartEl, gamutByHue, covByHue, false);
-    summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + achievablePoints.length + '</b> colors (' + gamutPct + '% of HSV space)</div>' +
-      '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + covered + '</b>/' + achievablePoints.length + ' covered (<b>' + covPct + '%</b>) — gaps: ' + uncoveredPoints.length + '</div>';
-    await yieldToUI();
-  }
+    uncovered.sort((a,b) => b.dE - a.dE);
+    self.postMessage({ type: 'coverage-done', covered, total: GAMUT.length, uncoveredCount: uncovered.length, worst: uncovered.slice(0, 15) });`,
 
-  const finalCovPct = (covered / achievablePoints.length * 100).toFixed(1);
-  summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + achievablePoints.length + '</b> colors (' + gamutPct + '% of HSV space)</div>' +
-    '<div class="gap-section-title" style="margin-top:6px">Your collection (' + collPaints.length + ' paints): <b>' + covered + '</b>/' + achievablePoints.length + ' covered (<b>' + finalCovPct + '%</b>) — gaps: ' + uncoveredPoints.length + ' (' + (100-finalCovPct).toFixed(1) + '%)</div>';
-
-  // Render final hue chart
-  renderHueChart(hueChartEl, gamutByHue, covByHue, false);
-
-  // Show worst uncovered
-  uncoveredPoints.sort((a,b) => b.dE - a.dE);
-  worstEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Hardest gaps (worst ΔE)</div>' +
-    uncoveredPoints.slice(0, 10).map(p => {
-      const hex = rgbToHex(p.lab[0], p.lab[1], p.lab[2]); // not exact, use HSV
-      const r = Math.round(p.hue/15)*15;
-      return '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.hue + ',' + (p.sat*100) + '%,' + (p.val*50) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.hue.toFixed(0) + '° S=' + (p.sat*100).toFixed(0) + '% V=' + (p.val*100).toFixed(0) + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>';
-    }).join('');
-
-  // Phase 3: Greedy — what to add (progressive, one candidate at a time)
-  note.textContent = 'Phase 3: Finding best paint to add…';
-  const unowned = allPaints.filter(p => !collSet.has(p.name));
-  const GREEDY_SAMPLE = Math.min(50, uncoveredPoints.length);
-  // Sample uncovered points spread across hue sectors
-  const shuffled = [...uncoveredPoints].sort((a,b) => a.hue - b.hue);
-  const step = Math.max(1, Math.floor(shuffled.length / GREEDY_SAMPLE));
-  const sample = [];
-  for (let i = 0; i < shuffled.length && sample.length < GREEDY_SAMPLE; i += step) sample.push(shuffled[i]);
-
-  greedyEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Recommended paints to add</div><div class="note" style="margin-bottom:8px">Testing each unowned paint against ' + sample.length + ' sampled gap colors. Updates after each candidate.</div><div id="cov-greedy-list"></div>';
-  const greedyList = document.getElementById('cov-greedy-list');
-
-  const results = [];
-  for (let i = 0; i < unowned.length; i++) {
-    const candidate = unowned[i];
-    const testCol = [...collPaints, candidate];
-    let newlyCovered = 0;
-    for (const gp of sample) {
-      const best = findMixHue(testCol, gp.lab, gp.hue);
-      if (best.dE < COV_THRESHOLD) newlyCovered++;
+    `// Phase 3: Greedy (progressive)
+    const unowned = allPaints.filter(p => !collNames.has(p.name));
+    const GREEDY_SAMPLE = Math.min(50, uncovered.length);
+    const sortedUncov = [...uncovered].sort((a,b) => a.h - b.h);
+    const step = Math.max(1, Math.floor(sortedUncov.length / GREEDY_SAMPLE));
+    const sample = [];
+    for (let i = 0; i < sortedUncov.length && sample.length < GREEDY_SAMPLE; i += step) sample.push(sortedUncov[i]);
+    const results = [];
+    for (let i = 0; i < unowned.length; i++) {
+      const candidate = unowned[i];
+      const testCol = [...collPaints, candidate];
+      let newlyCovered = 0;
+      for (const gp of sample) {
+        const best = findMixHue(testCol, gp.lab, gp.h);
+        if (best.dE < THRESHOLD) newlyCovered++;
+      }
+      results.push({ name: candidate.name, hex: candidate.hex, brand: candidate.brand, count: newlyCovered, total: sample.length });
+      results.sort((a,b) => b.count - a.count);
+      self.postMessage({ type: 'greedy-progress', index: i + 1, total: unowned.length, top5: results.slice(0, 5), uncoveredCount: uncovered.length });
     }
-    const pct = (newlyCovered / sample.length * 100).toFixed(1);
-    results.push({ paint: candidate, count: newlyCovered, pct });
+    self.postMessage({ type: 'greedy-done', top10: results.slice(0, 10) });`
+  ].join('\n');
 
-    progressFill.style.width = (80 + (i / unowned.length) * 20) + '%';
-    note.textContent = 'Phase 3: Testing ' + candidate.name + ' (' + (i+1) + '/' + unowned.length + ') — ' + newlyCovered + '/' + sample.length + ' gaps recovered';
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  const worker = new Worker(URL.createObjectURL(blob));
 
-    // Show live top 5
-    results.sort((a,b) => b.count - a.count);
-    const top5 = results.slice(0, 5);
-    greedyList.innerHTML = top5.map((r, idx) => {
-      const proj = Math.round(r.count / sample.length * uncoveredPoints.length);
-      return '<div class="gap-item"><span class="swatch" style="background:' + r.paint.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.paint.name) + ' (' + r.paint.brand + ') <span class="dE-good">' + r.count + '/' + sample.length + ' gaps</span></div><div class="gap-rec">Projected: ~' + proj + ' of ' + uncoveredPoints.length + ' gaps filled → coverage ~' + ((covered + proj) / achievablePoints.length * 100).toFixed(1) + '%</div></div></div>';
-    }).join('');
+  worker.onmessage = function(e) {
+    const msg = e.data;
 
-    // Yield every 2 candidates
-    if (i % 2 === 0) await yieldToUI();
-  }
+    if (msg.type === 'gamut') {
+      const pct = (msg.gamut.length / msg.totalGrid * 100).toFixed(1);
+      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.gamut.length + '</b> colors (' + pct + '% of HSV space) — precomputed</div>';
+      note.textContent = 'Phase 2: Measuring your collection…';
+      progressFill.style.width = '5%';
+    }
 
-  // Final greedy results
-  results.sort((a,b) => b.count - a.count);
-  const top10 = results.slice(0, 10);
-  greedyList.innerHTML = top10.map((r, idx) => {
-    const proj = Math.round(r.count / sample.length * uncoveredPoints.length);
-    return '<div class="gap-item"><span class="swatch" style="background:' + r.paint.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.paint.name) + ' (' + r.paint.brand + ') <span class="dE-good">' + r.count + '/' + sample.length + ' gaps (' + r.pct + '%)</span></div><div class="gap-rec">Projected: ~' + proj + ' of ' + uncoveredPoints.length + ' gaps filled → new coverage ~' + ((covered + proj) / achievablePoints.length * 100).toFixed(1) + '%</div></div></div>';
-  }).join('') + '<div class="note" style="margin-top:8px">Based on ' + sample.length + ' sampled gap colors. Projected recovery scaled to full ' + uncoveredPoints.length + ' gaps.</div>';
+    if (msg.type === 'coverage-progress') {
+      const pct = (msg.covered / msg.total * 100).toFixed(1);
+      progressFill.style.width = (5 + msg.index / msg.total * 45) + '%';
+      note.textContent = 'Phase 2: ' + msg.covered + '/' + msg.total + ' (' + pct + '%) — ' + msg.uncovered + ' gaps';
+      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
+        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncovered + '</div>';
+      renderHueChart(hueChartEl, msg.covByHue);
+    }
 
-  note.textContent = 'Done.';
-  progressFill.style.width = '100%';
-  btn.disabled = false;
-  btn.textContent = 'Run coverage analysis';
-  progressBar.style.display = 'none';
+    if (msg.type === 'coverage-done') {
+      const pct = (msg.covered / msg.total * 100).toFixed(1);
+      progressFill.style.width = '50%';
+      note.textContent = 'Phase 3: Testing recommended paints…';
+      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
+        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncoveredCount + '</div>';
+      worstEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Hardest gaps</div>' +
+        msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + (p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
+      greedyEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Recommended paints to add</div><div class="note" style="margin-bottom:8px">Live leaderboard — updates after each candidate.</div><div id="cov-greedy-list"></div>';
+    }
+
+    if (msg.type === 'greedy-progress') {
+      progressFill.style.width = (50 + msg.index / msg.total * 50) + '%';
+      note.textContent = 'Phase 3: ' + msg.index + '/' + msg.total + ' candidates tested';
+      const list = document.getElementById('cov-greedy-list');
+      if (list) {
+        list.innerHTML = msg.top5.map((r, idx) => {
+          var proj = Math.round(r.count / r.total * msg.uncoveredCount);
+          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + '</span></div><div class="gap-rec">~' + proj + ' of ' + msg.uncoveredCount + ' gaps filled → ~' + ((msg.covered + proj) / msg.total * 100).toFixed(1) + '% coverage</div></div></div>';
+        }).join('');
+      }
+    }
+
+    if (msg.type === 'greedy-done') {
+      progressFill.style.width = '100%';
+      note.textContent = 'Done.';
+      const list = document.getElementById('cov-greedy-list');
+      if (list) {
+        list.innerHTML = msg.top10.map((r, idx) => {
+          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + ' (' + (r.count/r.total*100).toFixed(0) + '%)</span></div><div class="gap-rec">Recovers ' + r.count + ' of ' + r.total + ' sampled gap colors</div></div></div>';
+        }).join('');
+      }
+      progressBar.style.display = 'none';
+      btn.disabled = false;
+      btn.textContent = 'Run coverage analysis';
+      worker.terminate();
+    }
+  };
+
+  worker.onerror = function(err) {
+    note.textContent = 'Error: ' + err.message;
+    btn.disabled = false;
+    btn.textContent = 'Run coverage analysis';
+    progressBar.style.display = 'none';
+    worker.terminate();
+  };
 }
 
-function renderHueChart(el, gamutByHue, covByHue, isGamutOnly) {
-  const hueNames = ['0° Red','30° Orange','60° Y-Green','90° Green','120° G-Cyan','150° Teal','180° Cyan','210° Blue','240° B-Purple','270° Purple','300° Magenta','330° Pink'];
-  let html = '<div class="gap-section-title">' + (isGamputOnly ? 'Achievable gamut by hue' : 'Coverage by hue sector') + '</div>';
-  html += '<div style="display:grid;gap:4px;margin-top:8px">';
+function renderHueChart(el, covByHue) {
+  const hueNames = ['Red','Orange','Y-Green','Green','G-Cyan','Teal','Cyan','Blue','B-Purple','Purple','Magenta','Pink'];
+  let html = '<div class="gap-section-title" style="margin-top:12px">Coverage by hue</div>';
+  html += '<div style="display:grid;gap:3px;margin-top:6px">';
   for (let h = 0; h < 360; h += 30) {
-    const gamut = gamutByHue[h] || 0;
-    const cov = covByHue[h] ? covByHue[h].covered : 0;
-    const pct = isGamutOnly ? '' : (gamut > 0 ? ' · ' + (cov/gamut*100).toFixed(0) + '%' : '');
-    const covBar = isGamutOnly ? '' : 'background:linear-gradient(90deg,var(--good) ' + (gamut > 0 ? cov/gamut*100 : 0) + '%,var(--bg-accent) ' + (gamut > 0 ? cov/gamut*100 : 0) + '%)';
+    const d = covByHue[h] || { total: 0, covered: 0 };
+    const pctVal = d.total > 0 ? (d.covered / d.total * 100) : 0;
     const label = hueNames[h/30] || (h + '°');
-    if (isGamutOnly) {
-      html += '<div style="display:flex;align-items:center;gap:8px;font-size:12px"><span style="width:80px;color:var(--text-dim)">' + label + '</span><div style="flex:1;height:14px;border-radius:3px;background:var(--bg-accent);position:relative"><div style="position:absolute;height:100%;border-radius:3px;background:var(--accent);width:' + Math.min(100, gamut) + '%"></div></div><span style="width:30px;text-align:right">' + gamut + '</span></div>';
-    } else {
-      const pctVal = gamut > 0 ? (cov/gamut*100) : 0;
-      html += '<div style="display:flex;align-items:center;gap:8px;font-size:12px"><span style="width:80px;color:var(--text-dim)">' + label + '</span><div style="flex:1;height:14px;border-radius:3px;background:var(--bg-accent);position:relative"><div style="position:absolute;height:100%;border-radius:3px;background:var(--good);width:' + pctVal + '%"></div></div><span style="width:60px;text-align:right">' + cov + '/' + gamut + ' (' + pctVal.toFixed(0) + '%)</span></div>';
-    }
+    html += '<div style="display:flex;align-items:center;gap:8px;font-size:12px"><span style="width:70px;color:var(--text-dim)">' + label + '</span><div style="flex:1;height:12px;border-radius:3px;background:var(--bg-accent);position:relative"><div style="position:absolute;height:100%;border-radius:3px;background:var(--good);width:' + pctVal + '%"></div></div><span style="width:60px;text-align:right">' + d.covered + '/' + d.total + ' (' + pctVal.toFixed(0) + '%)</span></div>';
   }
   html += '</div>';
   el.innerHTML = html;
