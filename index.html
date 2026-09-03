@@ -161,6 +161,14 @@
         </label>
         <span class="mode-note">Use my collection only</span>
       </div>
+      <div class="field">
+        <label>Mix depth</label>
+        <select id="mix-depth">
+          <option value="2">2 paints</option>
+          <option value="3" selected>3 paints</option>
+          <option value="both">2 + 3 (compare)</option>
+        </select>
+      </div>
       <button id="mix-btn">Mix</button>
     </div>
     <div class="note">Model caveat: hex values are eyedropped from marketing swatches, and real pigment behavior (opacity, tint strength) isn't captured — treat ratios as a starting point, then adjust by eye.</div>
@@ -214,6 +222,13 @@
           <option value="3" selected>3 paints</option>
           <option value="4">4 paints</option>
           <option value="5">5 paints</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Mix depth</label>
+        <select id="gaps-mix-depth">
+          <option value="2" selected>2-paint mixes</option>
+          <option value="3">3-paint mixes</option>
         </select>
       </div>
       <button id="gaps-run" class="secondary">Run analysis</button>
@@ -399,25 +414,38 @@ function hsvOf(rgb) {
 
 function renderMixResults(targetHex) {
   const useCollection = document.getElementById('use-collection').checked;
+  const mixDepth = document.getElementById('mix-depth').value;
   const paints = getPaints(useCollection);
   const targetRgb = hexToRgb(targetHex);
   const targetLab = rgbToLab(targetRgb);
   const t0 = performance.now();
-  const best2 = findMix(paints, targetLab, 2, 15);
-  const best3 = findMix(paints, targetLab, 3, 7);
+
+  let best2 = null, best3 = null;
+  if (mixDepth === '2' || mixDepth === 'both') best2 = findMix(paints, targetLab, 2, 15);
+  if (mixDepth === '3' || mixDepth === 'both') best3 = findMix(paints, targetLab, 3, 7);
   const ms = Math.round(performance.now() - t0);
+
   document.getElementById('mix-hint').textContent = paints.length + ' paints searched in ' + ms + 'ms — weighted geometric mean in linear RGB, evaluated with CIEDE2000.';
+
   const results = document.getElementById('mix-results');
   const hsv = hsvOf(targetRgb);
   let blocks = '<div class="result"><span class="swatch" style="background:' + targetHex + '"></span><div class="result-info"><div class="result-title">Target</div><div class="result-detail">' + targetHex + ' · H=' + hsv[0].toFixed(0) + '° S=' + (hsv[1]*100).toFixed(0) + '% V=' + (hsv[2]*100).toFixed(0) + '%</div></div></div>';
-  if (best2.paints) {
+
+  if (best2 && best2.paints) {
     blocks += '<div class="result"><span class="swatch" style="background:' + best2.resultHex + '"></span><div class="result-info"><div class="result-title">Best 2-paint mix</div><div class="result-detail">Predicted <b>' + best2.resultHex + '</b> · ΔE <span class="' + dEClass(best2.dE) + '">' + best2.dE.toFixed(1) + '</span> (' + dELabel(best2.dE) + ')</div></div><div class="swatch-row">' + best2.paints.map(mixPartHTML).join('') + '</div></div>';
   }
-  if (best3.paints && best3.paints.length > 2) {
+
+  if (best3 && best3.paints && best3.paints.length > 2) {
     blocks += '<div class="result"><span class="swatch" style="background:' + best3.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + best3.resultHex + '</b> · ΔE <span class="' + dEClass(best3.dE) + '">' + best3.dE.toFixed(1) + '</span> (' + dELabel(best3.dE) + ')</div></div><div class="swatch-row">' + best3.paints.map(mixPartHTML).join('') + '</div></div>';
-  } else if (best2.paints) {
+  } else if (mixDepth === '3' && (!best3 || !best3.paints || best3.paints.length <= 2)) {
+    // 3-paint search didn't find anything better than 2-paint
+    if (best2 && best2.paints) {
+      blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
+    }
+  } else if (mixDepth === 'both' && best2 && best2.dE <= (best3 ? best3.dE : Infinity)) {
     blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
   }
+
   results.innerHTML = blocks;
 }
 
@@ -481,6 +509,7 @@ function togglePaint(name) {
 function runGaps() {
   const btn = document.getElementById('gaps-run');
   const depth = parseInt(document.getElementById('gaps-depth').value);
+  const mixDepth = parseInt(document.getElementById('gaps-mix-depth').value);
   btn.disabled = true;
   btn.textContent = 'Analyzing…';
   document.getElementById('gaps-list').innerHTML = '';
@@ -500,7 +529,7 @@ function runGaps() {
     for (let i = 0; i < ALL_PAINTS.length; i++) {
       const target = ALL_PAINTS[i];
       const tLab = rgbToLab(hexToRgb(target.hex));
-      const best = findMix(mine, tLab, 2, 5);
+      const best = findMix(mine, tLab, mixDepth, 5);
       results.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
       if (i % 20 === 0) progressFill.style.width = (i / ALL_PAINTS.length * 30) + '%';
     }
@@ -528,7 +557,7 @@ function runGaps() {
       const currentResults = [];
       for (const target of ALL_PAINTS) {
         const tLab = rgbToLab(hexToRgb(target.hex));
-        const best = findMix(mine, tLab, 2, 5);
+        const best = findMix(mine, tLab, mixDepth, 5);
         currentResults.push({ target: target.name, targetHex: target.hex, dE: best.dE });
       }
       currentResults.sort((a,b) => b.dE - a.dE);
@@ -554,7 +583,7 @@ function runGaps() {
         let augTotal = 0;
         for (const target of ALL_PAINTS) {
           const tLab = rgbToLab(hexToRgb(target.hex));
-          const best = findMix(aug, tLab, 2, 5);
+          const best = findMix(aug, tLab, mixDepth, 5);
           augTotal += best.dE;
         }
         improvements.push({ name: c.name, hex: c.hex, type: c.type, improvement: currentTotal - augTotal, newAvg: augTotal / ALL_PAINTS.length });
@@ -608,6 +637,7 @@ document.getElementById('target-hex').addEventListener('keydown', e => { if (e.k
 document.getElementById('target-picker').addEventListener('input', e => { document.getElementById('target-hex').value = e.target.value; doMix(); });
 document.getElementById('target-hex').addEventListener('input', e => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) { document.getElementById('target-picker').value = v; doMix(); } });
 document.getElementById('use-collection').addEventListener('change', () => { clearCache(); doMix(); });
+document.getElementById('mix-depth').addEventListener('change', () => { doMix(); });
 document.getElementById('gaps-run').addEventListener('click', runGaps);
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 doMix();
