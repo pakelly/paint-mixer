@@ -110,17 +110,17 @@
     background: #f5a623; color: #000; border: 1.5px solid #000;
     font-size: 0.8rem; width: 22px; height: 22px;
   }
-  .gap-item .gap-actions { display: flex; gap: 6px; margin-left: auto; }
-  .gap-item .gap-actions button {
-    background: var(--panel2); border: 1px solid var(--border); color: var(--dim);
-    border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer;
-    transition: all 0.15s; white-space: nowrap;
+  .gap-item .gap-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+  .gap-item .gap-cycle {
+    width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: 700; border: 1.5px solid var(--border);
+    background: var(--panel2); color: var(--dim); transition: all 0.15s;
   }
-  .gap-item .gap-actions button:hover { color: var(--text); border-color: var(--accent); }
-  .gap-item .gap-actions button.act-wish:hover { color: #f5a623; border-color: #f5a623; }
-  .gap-item .gap-actions button.act-own:hover { color: var(--good); border-color: var(--good); }
-  .gap-item .gap-actions button.state-owned { color: var(--good); border-color: var(--good); cursor: default; }
-  .gap-item .gap-actions button.state-wished { color: #f5a623; border-color: #f5a623; cursor: default; }
+  .gap-item .gap-cycle:hover { border-color: var(--accent); color: var(--text); }
+  .gap-item .gap-cycle.is-owned { background: var(--good); color: #0b1a24; border-color: var(--good); }
+  .gap-item .gap-cycle.is-wished { background: #f5a623; color: #000; border-color: #000; }
+  .gap-item .gap-cycle.is-unowned { background: var(--panel2); color: var(--dim); border-color: var(--border); }
   .wish-section { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 16px; }
   .wish-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
   .wish-section .wish-hint { font-size: 0.78rem; color: var(--dim); margin-bottom: 10px; }
@@ -661,34 +661,29 @@ function renderMixResults(targetHex) {
   results.innerHTML = blocks;
 }
 
-// Generate action buttons for a recommended paint in gap/coverage results
+// Generate cycle button for a recommended paint in gap/coverage results
 function gapActions(name) {
   const safeName = esc(name).replace(/'/g, "\\'");
   const owned = COLLECTION_NAMES.has(name);
   const wished = WISHLIST_NAMES.has(name);
-  if (owned) {
-    return '<div class="gap-actions"><button class="state-owned">✓ Owned</button></div>';
-  } else if (wished) {
-    return '<div class="gap-actions"><button class="act-own" onclick="gapAddOwned(\'' + safeName + '\')">✓ Own</button><button class="state-wished">★ Wish</button></div>';
+  let cls = 'is-unowned', label = '○';
+  if (owned) { cls = 'is-owned'; label = '✓'; }
+  else if (wished) { cls = 'is-wished'; label = '★'; }
+  return '<div class="gap-actions" data-paint="' + esc(name) + '"><div class="gap-cycle ' + cls + '" onclick="gapCycle(\'' + safeName + '\')" title="Click to cycle: unowned → wishlist → owned">' + label + '</div></div>';
+}
+
+// 3-state cycle from gap tab (same as browse: unowned → wishlist → owned → unowned)
+function gapCycle(name) {
+  if (COLLECTION_NAMES.has(name)) {
+    COLLECTION_NAMES.delete(name);
+  } else if (WISHLIST_NAMES.has(name)) {
+    WISHLIST_NAMES.delete(name);
+    COLLECTION_NAMES.add(name);
   } else {
-    return '<div class="gap-actions"><button class="act-wish" onclick="gapAddWishlist(\'' + safeName + '\')">★ Wish</button><button class="act-own" onclick="gapAddOwned(\'' + safeName + '\')">✓ Own</button></div>';
+    WISHLIST_NAMES.add(name);
   }
-}
-
-function gapAddWishlist(name) {
-  WISHLIST_NAMES.add(name);
-  saveWishlist(WISHLIST_NAMES);
-  clearCache();
-  refreshGapActions();
-  renderCollection();
-  renderBrowse();
-}
-
-function gapAddOwned(name) {
-  if (WISHLIST_NAMES.has(name)) WISHLIST_NAMES.delete(name);
-  COLLECTION_NAMES.add(name);
-  saveWishlist(WISHLIST_NAMES);
   saveCollection(COLLECTION_NAMES);
+  saveWishlist(WISHLIST_NAMES);
   clearCache();
   refreshGapActions();
   renderCollection();
@@ -697,20 +692,16 @@ function gapAddOwned(name) {
 
 // Update all gap-action buttons in place without re-running analysis
 function refreshGapActions() {
-  document.querySelectorAll('.gap-item').forEach(item => {
-    // Extract paint name from the gap-name element
-    const nameEl = item.querySelector('.gap-name');
-    if (!nameEl) return;
-    // Name is after the label/prefix, extract from text content
-    const text = nameEl.textContent;
-    // Try to match against ALL_PAINTS names
-    for (const p of ALL_PAINTS) {
-      if (text.includes(p.name)) {
-        const actionsEl = item.querySelector('.gap-actions');
-        if (actionsEl) actionsEl.outerHTML = gapActions(p.name);
-        break;
-      }
-    }
+  document.querySelectorAll('.gap-actions[data-paint]').forEach(el => {
+    const name = el.getAttribute('data-paint');
+    const owned = COLLECTION_NAMES.has(name);
+    const wished = WISHLIST_NAMES.has(name);
+    const btn = el.querySelector('.gap-cycle');
+    if (!btn) return;
+    btn.classList.remove('is-unowned', 'is-owned', 'is-wished');
+    if (owned) { btn.classList.add('is-owned'); btn.textContent = '✓'; }
+    else if (wished) { btn.classList.add('is-wished'); btn.textContent = '★'; }
+    else { btn.classList.add('is-unowned'); btn.textContent = '○'; }
   });
 }
 
