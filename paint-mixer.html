@@ -87,6 +87,38 @@
   .paint-card .pname { font-size: 0.75rem; color: var(--text); }
   .paint-card .ptype { font-size: 0.65rem; color: var(--dim); }
   .paint-card.owned { border-color: var(--good); }
+  .paint-card.wishlist { border-color: var(--yellow); border-style: dashed; }
+  .paint-card.wishlist .check { display: none; }
+  .paint-card .wishlist-mark {
+    position: absolute; top: 6px; right: 6px; width: 18px; height: 18px;
+    border-radius: 50%; display: none;
+    align-items: center; justify-content: center; font-size: 0.65rem; color: #0b1a24; font-weight: 700;
+    background: var(--yellow);
+  }
+  .paint-card.wishlist .wishlist-mark { display: flex; }
+  .paint-card.owned .wishlist-mark { display: none; }
+  .paint-card .actions {
+    position: absolute; bottom: 4px; right: 4px; display: flex; gap: 3px;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  /* On touch devices :hover doesn't fire, so always show actions on small screens */
+  @media (max-width: 768px) {
+    .paint-card .actions { opacity: 1; }
+  }
+  @media (hover: none) {
+    .paint-card .actions { opacity: 1; }
+  }
+  .paint-card .actions button {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--dim);
+    border-radius: 4px; padding: 2px 6px; font-size: 0.65rem; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .paint-card .actions button:hover { color: var(--text); border-color: var(--accent); }
+  .paint-card .actions button.act-own:hover { color: var(--good); border-color: var(--good); }
+  .paint-card .actions button.act-wish:hover { color: var(--yellow); border-color: var(--yellow); }
+  .wish-section { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 16px; }
+  .wish-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
+  .wish-section .wish-hint { font-size: 0.78rem; color: var(--dim); margin-bottom: 10px; }
   .paint-card .check {
     position: absolute; top: 6px; right: 6px; width: 18px; height: 18px;
     border-radius: 50%; background: var(--good); display: none;
@@ -128,6 +160,12 @@
   .filter-row input[type=text] { width: 160px; }
   .owned-count { font-size: 0.85rem; color: var(--dim); }
   .owned-count b { color: var(--good); }
+  .wish-count { font-size: 0.85rem; color: var(--dim); margin-left: 12px; }
+  .wish-count b { color: var(--yellow); }
+  .wish-controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+  .wish-controls button { font-size: 0.78rem; }
+  .wish-controls .wish-toggle-label { font-size: 0.8rem; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .wish-controls .wish-toggle-label input { accent-color: var(--yellow); }
 </style>
 </head>
 <body>
@@ -203,6 +241,17 @@
     <h2>My collection (<span id="coll-count"></span> paints)</h2>
     <div class="summary-strip" id="coll-summary"></div>
     <div class="grid" id="coll-grid"></div>
+
+    <div class="wish-section">
+      <h3> Wishlist (<span id="wish-count">0</span> paints)</h3>
+      <div class="wish-hint">Paints you're considering adding. Click a swatch to mix-test it. Use the browse tab to add more.</div>
+      <div class="wish-controls">
+        <label class="wish-toggle-label"><input type="checkbox" id="wish-include-analysis"> Include in analysis (treat as owned)</label>
+        <button class="secondary" id="wish-promote-all" onclick="promoteAllWishlist()">Move all to owned</button>
+        <button class="secondary" id="wish-clear" onclick="clearWishlist()">Clear wishlist</button>
+      </div>
+      <div class="grid" id="wish-grid"></div>
+    </div>
   </div>
 </div>
 
@@ -228,7 +277,14 @@
         <option value="hue">Sort: Hue</option>
         <option value="name">Sort: Name</option>
       </select>
+      <select id="browse-filter-state" onchange="renderBrowse()">
+        <option value="all">All paints</option>
+        <option value="owned">Owned only</option>
+        <option value="wishlist">Wishlist only</option>
+        <option value="unowned">Not owned</option>
+      </select>
       <span class="owned-count"><b id="browse-owned-count"></b> owned</span>
+      <span class="wish-count"><b id="browse-wish-count"></b> wishlist</span>
     </div>
     <div class="grid" id="browse-grid"></div>
   </div>
@@ -301,6 +357,19 @@ function saveCollection(set) {
 }
 let COLLECTION_NAMES = loadCollection();
 
+// Wishlist persistence
+function loadWishlist() {
+  try {
+    const stored = localStorage.getItem('paint-mixer-wishlist');
+    if (stored) return new Set(JSON.parse(stored));
+  } catch(e) {}
+  return new Set();
+}
+function saveWishlist(set) {
+  localStorage.setItem('paint-mixer-wishlist', JSON.stringify([...set].sort()));
+}
+let WISHLIST_NAMES = loadWishlist();
+
 let paintCache = null;
 let paintCacheKey = '';
 function getPaints(useCollection) {
@@ -308,6 +377,13 @@ function getPaints(useCollection) {
   const cacheKey = useCollection + '|' + brand;
   if (paintCache && paintCacheKey === cacheKey) return paintCache;
   let source = useCollection ? ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name)) : ALL_PAINTS;
+  // If including wishlist in analysis, merge them in
+  const includeWish = document.getElementById('wish-include-analysis') && document.getElementById('wish-include-analysis').checked;
+  if (useCollection && includeWish) {
+    source = ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name) || WISHLIST_NAMES.has(p.name));
+  } else if (useCollection) {
+    source = ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name));
+  }
   if (brand !== 'all') source = source.filter(p => p.brand === brand);
   paintCache = source.map(p => ({ ...p, rgb: hexToRgb(p.hex), lab: rgbToLab(hexToRgb(p.hex)) }));
   paintCacheKey = cacheKey;
@@ -582,6 +658,68 @@ function renderCollection() {
     '<div class="paint-card owned" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="pickPaint(\'' + p.hex + '\')">' +
     '<div class="check">✓</div><div class="bar" style="background:' + p.hex + '"></div>' +
     '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + '</div></div>').join('');
+
+  // Render wishlist section
+  renderWishlist();
+}
+
+function renderWishlist() {
+  const wishPaints = ALL_PAINTS.filter(p => WISHLIST_NAMES.has(p.name))
+    .map(p => ({ ...p, rgb: hexToRgb(p.hex) }));
+  document.getElementById('wish-count').textContent = wishPaints.length;
+  const wishGrid = document.getElementById('wish-grid');
+  if (wishPaints.length === 0) {
+    wishGrid.innerHTML = '<div class="hint">No wishlist paints yet. Add some from the Browse tab.</div>';
+    return;
+  }
+  wishGrid.innerHTML = wishPaints.map(p =>
+    '<div class="paint-card wishlist" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="pickPaint(\'' + p.hex + '\')">' +
+    '<div class="wishlist-mark">★</div><div class="bar" style="background:' + p.hex + '"></div>' +
+    '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div>' +
+    '<div class="actions"><button class="act-own" onclick="event.stopPropagation();wishlistToOwned(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">✓ Own</button>' +
+    '<button class="act-wish" onclick="event.stopPropagation();toggleWishlist(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">Remove</button></div></div>').join('');
+}
+
+function toggleWishlist(name) {
+  if (WISHLIST_NAMES.has(name)) WISHLIST_NAMES.delete(name);
+  else {
+    WISHLIST_NAMES.add(name);
+    // If it was owned, remove from owned (wishlist replaces owned)
+    if (COLLECTION_NAMES.has(name)) COLLECTION_NAMES.delete(name);
+  }
+  saveWishlist(WISHLIST_NAMES);
+  saveCollection(COLLECTION_NAMES);
+  clearCache();
+  renderBrowse();
+  renderWishlist();
+}
+
+function wishlistToOwned(name) {
+  WISHLIST_NAMES.delete(name);
+  COLLECTION_NAMES.add(name);
+  saveWishlist(WISHLIST_NAMES);
+  saveCollection(COLLECTION_NAMES);
+  clearCache();
+  renderBrowse();
+  renderWishlist();
+  if (document.getElementById('coll-grid').innerHTML) renderCollection();
+}
+
+function promoteAllWishlist() {
+  WISHLIST_NAMES.forEach(name => COLLECTION_NAMES.add(name));
+  WISHLIST_NAMES.clear();
+  saveWishlist(WISHLIST_NAMES);
+  saveCollection(COLLECTION_NAMES);
+  clearCache();
+  renderCollection();
+  renderBrowse();
+}
+
+function clearWishlist() {
+  WISHLIST_NAMES.clear();
+  saveWishlist(WISHLIST_NAMES);
+  renderWishlist();
+  renderBrowse();
 }
 
 function pickPaint(hex) {
@@ -597,20 +735,36 @@ function renderBrowse() {
   const typeFilter = document.getElementById('browse-type').value;
   const brandFilter = document.getElementById('browse-brand').value;
   const sortBy = document.getElementById('browse-sort').value;
-  let paints = ALL_PAINTS.map(p => ({ ...p, owned: COLLECTION_NAMES.has(p.name) }));
+  const stateFilter = document.getElementById('browse-filter-state') ? document.getElementById('browse-filter-state').value : 'all';
+  let paints = ALL_PAINTS.map(p => ({ ...p, owned: COLLECTION_NAMES.has(p.name), wished: WISHLIST_NAMES.has(p.name) }));
   if (search) paints = paints.filter(p => p.name.toLowerCase().includes(search));
   if (typeFilter) paints = paints.filter(p => p.type === typeFilter);
   if (brandFilter) paints = paints.filter(p => p.brand === brandFilter);
+  if (stateFilter === 'owned') paints = paints.filter(p => p.owned);
+  if (stateFilter === 'wishlist') paints = paints.filter(p => p.wished);
+  if (stateFilter === 'unowned') paints = paints.filter(p => !p.owned);
   if (sortBy === 'name') paints.sort((a,b) => a.name.localeCompare(b.name));
   else if (sortBy === 'hue') paints.sort((a,b) => hsvOf(hexToRgb(a.hex))[0] - hsvOf(hexToRgb(b.hex))[0]);
   else paints.sort((a,b) => Number(a.id||0) - Number(b.id||0));
   document.getElementById('browse-owned-count').textContent = COLLECTION_NAMES.size;
+  document.getElementById('browse-wish-count').textContent = WISHLIST_NAMES.size;
   document.getElementById('browse-count').textContent = paints.length;
   const grid = document.getElementById('browse-grid');
-  grid.innerHTML = paints.map(p =>
-    '<div class="paint-card' + (p.owned ? ' owned' : '') + '" onclick="togglePaint(\'' + esc(p.name).replace(/'/g,"\\'") + '\')">' +
-    '<div class="check">✓</div><div class="bar" style="background:' + p.hex + '"></div>' +
-    '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div></div>').join('');
+  grid.innerHTML = paints.map(p => {
+    let cls = 'paint-card';
+    if (p.owned) cls += ' owned';
+    else if (p.wished) cls += ' wishlist';
+    const safeName = esc(p.name).replace(/'/g, "\\'");
+    return '<div class="' + cls + '" onclick="togglePaint(\'' + safeName + '\')">' +
+      '<div class="check">✓</div><div class="wishlist-mark">★</div>' +
+      '<div class="bar" style="background:' + p.hex + '"></div>' +
+      '<div class="pname">' + esc(p.name) + '</div>' +
+      '<div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div>' +
+      '<div class="actions">' +
+        (p.owned ? '' : '<button class="act-own" onclick="event.stopPropagation();COLLECTION_NAMES.add(\'' + safeName + '\');saveCollection(COLLECTION_NAMES);clearCache();renderBrowse();renderCollection();">✓ Own</button>') +
+        (p.wished ? '<button class="act-wish" onclick="event.stopPropagation();toggleWishlist(\'' + safeName + '\')">★ Unwish</button>' : (p.owned ? '' : '<button class="act-wish" onclick="event.stopPropagation();toggleWishlist(\'' + safeName + '\')">★ Wish</button>')) +
+      '</div></div>';
+  }).join('');
 }
 
 function togglePaint(name) {
@@ -640,9 +794,14 @@ function runGaps() {
   progressBar.style.display = 'block';
   progressFill.style.width = '0%';
 
+  const includeWish = document.getElementById('wish-include-analysis') && document.getElementById('wish-include-analysis').checked;
+  const collectionForAnalysis = includeWish
+    ? [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])]
+    : [...COLLECTION_NAMES];
+
   const workerCode = [
     'const PAINTS = ' + JSON.stringify(ALL_PAINTS) + ';',
-    'const COLLECTION = ' + JSON.stringify([...COLLECTION_NAMES]) + ';',
+    'const COLLECTION = ' + JSON.stringify(collectionForAnalysis) + ';',
     'const DEPTH = ' + depth + ';',
     'const MIX_DEPTH = ' + mixDepth + ';',
 
@@ -905,12 +1064,15 @@ function runCoverage() {
   greedyEl.innerHTML = '';
   worstEl.innerHTML = '';
 
-  // Build worker code as inline blob
+  const includeWishCov = document.getElementById('wish-include-analysis') && document.getElementById('wish-include-analysis').checked;
+  const collectionForCov = includeWishCov
+    ? [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])]
+    : [...COLLECTION_NAMES];
   const workerCode = [
     'const PAINTS = ' + JSON.stringify(ALL_PAINTS.map(p => ({ name: p.name, hex: p.hex, brand: p.brand, type: p.type }))) + ';',
     'const GAMUT = ' + JSON.stringify(PRECOMPUTED_GAMUT) + ';',
     'const THRESHOLD = ' + COV_THRESHOLD + ';',
-    'const COLLECTION = ' + JSON.stringify([...COLLECTION_NAMES]) + ';',
+    'const COLLECTION = ' + JSON.stringify(collectionForCov) + ';',
 
     `function hexToRgb(hex){const h=hex.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
     function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
@@ -1085,6 +1247,7 @@ document.getElementById('target-hex').addEventListener('keydown', e => { if (e.k
 document.getElementById('target-picker').addEventListener('input', e => { document.getElementById('target-hex').value = e.target.value; doMix(); });
 document.getElementById('target-hex').addEventListener('input', e => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) { document.getElementById('target-picker').value = v; doMix(); } });
 document.getElementById('use-collection').addEventListener('change', () => { clearCache(); doMix(); });
+document.getElementById('wish-include-analysis').addEventListener('change', () => { clearCache(); doMix(); });
 document.getElementById('mix-depth').addEventListener('change', () => { doMix(); });
 document.getElementById('brand-filter').addEventListener('change', () => { clearCache(); doMix(); });
 document.getElementById('gaps-run').addEventListener('click', runGaps);
