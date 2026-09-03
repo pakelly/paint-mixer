@@ -169,6 +169,14 @@
           <option value="both">2 + 3 (compare)</option>
         </select>
       </div>
+      <div class="field">
+        <label>Brand</label>
+        <select id="brand-filter">
+          <option value="all" selected>All brands</option>
+          <option value="Army Painter">Army Painter</option>
+          <option value="Pro Acryl">Pro Acryl</option>
+        </select>
+      </div>
       <button id="mix-btn">Mix</button>
     </div>
     <div class="note">Model caveat: hex values are eyedropped from marketing swatches, and real pigment behavior (opacity, tint strength) isn't captured — treat ratios as a starting point, then adjust by eye.</div>
@@ -200,9 +208,14 @@
 <!-- ============ BROWSE TAB ============ -->
 <div id="tab-browse" class="tab-content" style="display:none">
   <div class="panel">
-    <h2>All Army Painter Fanatic paints</h2>
+    <h2>All paints (<span id="browse-count"></span>)</h2>
     <div class="filter-row">
       <input type="text" id="browse-search" placeholder="Search by name…" oninput="renderBrowse()">
+      <select id="browse-brand" onchange="renderBrowse()">
+        <option value="">All brands</option>
+        <option value="Army Painter">Army Painter</option>
+        <option value="Pro Acryl">Pro Acryl</option>
+      </select>
       <select id="browse-type" onchange="renderBrowse()">
         <option value="">All types</option>
         <option value="Opaque">Opaque</option>
@@ -270,13 +283,18 @@ function saveCollection(set) {
 let COLLECTION_NAMES = loadCollection();
 
 let paintCache = null;
+let paintCacheKey = '';
 function getPaints(useCollection) {
-  if (paintCache) return paintCache;
-  const source = useCollection ? ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name)) : ALL_PAINTS;
+  const brand = document.getElementById('brand-filter') ? document.getElementById('brand-filter').value : 'all';
+  const cacheKey = useCollection + '|' + brand;
+  if (paintCache && paintCacheKey === cacheKey) return paintCache;
+  let source = useCollection ? ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name)) : ALL_PAINTS;
+  if (brand !== 'all') source = source.filter(p => p.brand === brand);
   paintCache = source.map(p => ({ ...p, rgb: hexToRgb(p.hex), lab: rgbToLab(hexToRgb(p.hex)) }));
+  paintCacheKey = cacheKey;
   return paintCache;
 }
-function clearCache() { paintCache = null; }
+function clearCache() { paintCache = null; paintCacheKey = ''; }
 
 // ================= COLOR MATH =================
 function hexToRgb(hex) {
@@ -548,19 +566,22 @@ function pickPaint(hex) {
 function renderBrowse() {
   const search = document.getElementById('browse-search').value.toLowerCase();
   const typeFilter = document.getElementById('browse-type').value;
+  const brandFilter = document.getElementById('browse-brand').value;
   const sortBy = document.getElementById('browse-sort').value;
   let paints = ALL_PAINTS.map(p => ({ ...p, owned: COLLECTION_NAMES.has(p.name) }));
   if (search) paints = paints.filter(p => p.name.toLowerCase().includes(search));
   if (typeFilter) paints = paints.filter(p => p.type === typeFilter);
+  if (brandFilter) paints = paints.filter(p => p.brand === brandFilter);
   if (sortBy === 'name') paints.sort((a,b) => a.name.localeCompare(b.name));
   else if (sortBy === 'hue') paints.sort((a,b) => hsvOf(hexToRgb(a.hex))[0] - hsvOf(hexToRgb(b.hex))[0]);
-  else paints.sort((a,b) => Number(a.id) - Number(b.id));
+  else paints.sort((a,b) => Number(a.id||0) - Number(b.id||0));
   document.getElementById('browse-owned-count').textContent = COLLECTION_NAMES.size;
+  document.getElementById('browse-count').textContent = paints.length;
   const grid = document.getElementById('browse-grid');
   grid.innerHTML = paints.map(p =>
     '<div class="paint-card' + (p.owned ? ' owned' : '') + '" onclick="togglePaint(\'' + esc(p.name).replace(/'/g,"\\'") + '\')">' +
     '<div class="check">✓</div><div class="bar" style="background:' + p.hex + '"></div>' +
-    '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + '</div></div>').join('');
+    '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div></div>').join('');
 }
 
 function togglePaint(name) {
@@ -708,6 +729,7 @@ document.getElementById('target-picker').addEventListener('input', e => { docume
 document.getElementById('target-hex').addEventListener('input', e => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) { document.getElementById('target-picker').value = v; doMix(); } });
 document.getElementById('use-collection').addEventListener('change', () => { clearCache(); doMix(); });
 document.getElementById('mix-depth').addEventListener('change', () => { doMix(); });
+document.getElementById('brand-filter').addEventListener('change', () => { clearCache(); doMix(); });
 document.getElementById('gaps-run').addEventListener('click', runGaps);
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 doMix();
