@@ -290,6 +290,14 @@
     <h2>Collection analysis</h2>
     <div class="row" style="margin-bottom:12px">
       <div class="field">
+        <label>Paint pool</label>
+        <select id="gaps-pool">
+          <option value="owned" selected>Owned</option>
+          <option value="owned-wish">Owned + Wishlist</option>
+          <option value="all">All paints</option>
+        </select>
+      </div>
+      <div class="field">
         <label>Recommendations</label>
         <select id="gaps-depth">
           <option value="1">1 paint</option>
@@ -321,6 +329,14 @@
     <h2>Color space coverage</h2>
     <div class="note" style="margin-bottom:12px">Measures what percentage of the achievable color wheel your collection can reach at ΔE &lt; 3 (barely perceptible). The achievable gamut is defined by what any combination of the full paint line can mix. Updates progressively — you'll see results as each phase computes.</div>
     <div class="row" style="margin-bottom:12px">
+      <div class="field">
+        <label>Paint pool</label>
+        <select id="cov-pool">
+          <option value="owned" selected>Owned</option>
+          <option value="owned-wish">Owned + Wishlist</option>
+          <option value="all">All paints</option>
+        </select>
+      </div>
       <button id="cov-run" class="secondary">Run coverage analysis</button>
       <span class="mode-note" id="cov-note"></span>
     </div>
@@ -773,7 +789,7 @@ function runGaps() {
   progressBar.style.display = 'block';
   progressFill.style.width = '0%';
 
-  const poolMode = document.getElementById('paint-pool') ? document.getElementById('paint-pool').value : 'owned';
+  const poolMode = document.getElementById('gaps-pool') ? document.getElementById('gaps-pool').value : 'owned';
   let collectionForAnalysis;
   if (poolMode === 'all') {
     collectionForAnalysis = ALL_PAINTS.map(p => p.name);
@@ -1048,7 +1064,7 @@ function runCoverage() {
   greedyEl.innerHTML = '';
   worstEl.innerHTML = '';
 
-  const poolModeCov = document.getElementById('paint-pool') ? document.getElementById('paint-pool').value : 'owned';
+  const poolModeCov = document.getElementById('cov-pool') ? document.getElementById('cov-pool').value : 'owned';
   let collectionForCov;
   if (poolModeCov === 'all') {
     collectionForCov = ALL_PAINTS.map(p => p.name);
