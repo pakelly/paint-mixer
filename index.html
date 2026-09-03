@@ -97,25 +97,16 @@
   }
   .paint-card.wishlist .wishlist-mark { display: flex; }
   .paint-card.owned .wishlist-mark { display: none; }
-  .paint-card .actions {
-    position: absolute; bottom: 4px; right: 4px; display: flex; gap: 3px;
-    opacity: 0; transition: opacity 0.15s;
+  .paint-card .state-badge {
+    position: absolute; bottom: 6px; right: 6px;
+    width: 20px; height: 20px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; font-weight: 700;
+    background: var(--panel2); color: var(--dim);
+    border: 1px solid var(--border);
   }
-  /* On touch devices :hover doesn't fire, so always show actions on small screens */
-  @media (max-width: 768px) {
-    .paint-card .actions { opacity: 1; }
-  }
-  @media (hover: none) {
-    .paint-card .actions { opacity: 1; }
-  }
-  .paint-card .actions button {
-    background: var(--panel2); border: 1px solid var(--border); color: var(--dim);
-    border-radius: 4px; padding: 2px 6px; font-size: 0.65rem; cursor: pointer;
-    transition: all 0.15s;
-  }
-  .paint-card .actions button:hover { color: var(--text); border-color: var(--accent); }
-  .paint-card .actions button.act-own:hover { color: var(--good); border-color: var(--good); }
-  .paint-card .actions button.act-wish:hover { color: var(--yellow); border-color: var(--yellow); }
+  .paint-card.owned .state-badge { background: var(--good); color: #0b1a24; border-color: var(--good); }
+  .paint-card.wishlist .state-badge { background: var(--yellow); color: #0b1a24; border-color: var(--yellow); }
   .wish-section { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 16px; }
   .wish-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
   .wish-section .wish-hint { font-size: 0.78rem; color: var(--dim); margin-bottom: 10px; }
@@ -655,9 +646,10 @@ function renderCollection() {
   document.getElementById('coll-summary').innerHTML = pills;
   const grid = document.getElementById('coll-grid');
   grid.innerHTML = paints.map(p =>
-    '<div class="paint-card owned" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="pickPaint(\'' + p.hex + '\')">' +
+    '<div class="paint-card owned" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="cyclePaintState(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">' +
     '<div class="check">✓</div><div class="bar" style="background:' + p.hex + '"></div>' +
-    '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + '</div></div>').join('');
+    '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + '</div>' +
+    '<div class="state-badge">✓</div></div>').join('');
 
   // Render wishlist section
   renderWishlist();
@@ -673,36 +665,10 @@ function renderWishlist() {
     return;
   }
   wishGrid.innerHTML = wishPaints.map(p =>
-    '<div class="paint-card wishlist" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="pickPaint(\'' + p.hex + '\')">' +
+    '<div class="paint-card wishlist" title="' + esc(p.name) + ' (' + p.hex + ')" onclick="cyclePaintState(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">' +
     '<div class="wishlist-mark">★</div><div class="bar" style="background:' + p.hex + '"></div>' +
     '<div class="pname">' + esc(p.name) + '</div><div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div>' +
-    '<div class="actions"><button class="act-own" onclick="event.stopPropagation();wishlistToOwned(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">✓ Own</button>' +
-    '<button class="act-wish" onclick="event.stopPropagation();toggleWishlist(\'' + esc(p.name).replace(/'/g, "\\'") + '\')">Remove</button></div></div>').join('');
-}
-
-function toggleWishlist(name) {
-  if (WISHLIST_NAMES.has(name)) WISHLIST_NAMES.delete(name);
-  else {
-    WISHLIST_NAMES.add(name);
-    // If it was owned, remove from owned (wishlist replaces owned)
-    if (COLLECTION_NAMES.has(name)) COLLECTION_NAMES.delete(name);
-  }
-  saveWishlist(WISHLIST_NAMES);
-  saveCollection(COLLECTION_NAMES);
-  clearCache();
-  renderBrowse();
-  renderWishlist();
-}
-
-function wishlistToOwned(name) {
-  WISHLIST_NAMES.delete(name);
-  COLLECTION_NAMES.add(name);
-  saveWishlist(WISHLIST_NAMES);
-  saveCollection(COLLECTION_NAMES);
-  clearCache();
-  renderBrowse();
-  renderWishlist();
-  if (document.getElementById('coll-grid').innerHTML) renderCollection();
+    '<div class="state-badge">★</div></div>').join('');
 }
 
 function promoteAllWishlist() {
@@ -755,25 +721,34 @@ function renderBrowse() {
     if (p.owned) cls += ' owned';
     else if (p.wished) cls += ' wishlist';
     const safeName = esc(p.name).replace(/'/g, "\\'");
-    return '<div class="' + cls + '" onclick="togglePaint(\'' + safeName + '\')">' +
+    const stateLabel = p.owned ? '✓' : (p.wished ? '★' : '○');
+    return '<div class="' + cls + '" onclick="cyclePaintState(\'' + safeName + '\')">' +
       '<div class="check">✓</div><div class="wishlist-mark">★</div>' +
       '<div class="bar" style="background:' + p.hex + '"></div>' +
       '<div class="pname">' + esc(p.name) + '</div>' +
       '<div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div>' +
-      '<div class="actions">' +
-        (p.owned ? '' : '<button class="act-own" onclick="event.stopPropagation();COLLECTION_NAMES.add(\'' + safeName + '\');saveCollection(COLLECTION_NAMES);clearCache();renderBrowse();renderCollection();">✓ Own</button>') +
-        (p.wished ? '<button class="act-wish" onclick="event.stopPropagation();toggleWishlist(\'' + safeName + '\')">★ Unwish</button>' : (p.owned ? '' : '<button class="act-wish" onclick="event.stopPropagation();toggleWishlist(\'' + safeName + '\')">★ Wish</button>')) +
-      '</div></div>';
+      '<div class="state-badge">' + stateLabel + '</div></div>';
   }).join('');
 }
 
-function togglePaint(name) {
-  if (COLLECTION_NAMES.has(name)) COLLECTION_NAMES.delete(name);
-  else COLLECTION_NAMES.add(name);
+// 3-state cycle: unowned → wishlist → owned → unowned
+function cyclePaintState(name) {
+  if (COLLECTION_NAMES.has(name)) {
+    // owned → unowned
+    COLLECTION_NAMES.delete(name);
+  } else if (WISHLIST_NAMES.has(name)) {
+    // wishlist → owned
+    WISHLIST_NAMES.delete(name);
+    COLLECTION_NAMES.add(name);
+  } else {
+    // unowned → wishlist
+    WISHLIST_NAMES.add(name);
+  }
   saveCollection(COLLECTION_NAMES);
+  saveWishlist(WISHLIST_NAMES);
   clearCache();
   renderBrowse();
-  if (document.getElementById('coll-grid').innerHTML) renderCollection();
+  renderCollection();
 }
 
 // ================= GAPS TAB (greedy sequential) =================
