@@ -110,6 +110,17 @@
     background: #f5a623; color: #000; border: 1.5px solid #000;
     font-size: 0.8rem; width: 22px; height: 22px;
   }
+  .gap-item .gap-actions { display: flex; gap: 6px; margin-left: auto; }
+  .gap-item .gap-actions button {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--dim);
+    border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .gap-item .gap-actions button:hover { color: var(--text); border-color: var(--accent); }
+  .gap-item .gap-actions button.act-wish:hover { color: #f5a623; border-color: #f5a623; }
+  .gap-item .gap-actions button.act-own:hover { color: var(--good); border-color: var(--good); }
+  .gap-item .gap-actions button.state-owned { color: var(--good); border-color: var(--good); cursor: default; }
+  .gap-item .gap-actions button.state-wished { color: #f5a623; border-color: #f5a623; cursor: default; }
   .wish-section { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 16px; }
   .wish-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
   .wish-section .wish-hint { font-size: 0.78rem; color: var(--dim); margin-bottom: 10px; }
@@ -650,6 +661,59 @@ function renderMixResults(targetHex) {
   results.innerHTML = blocks;
 }
 
+// Generate action buttons for a recommended paint in gap/coverage results
+function gapActions(name) {
+  const safeName = esc(name).replace(/'/g, "\\'");
+  const owned = COLLECTION_NAMES.has(name);
+  const wished = WISHLIST_NAMES.has(name);
+  if (owned) {
+    return '<div class="gap-actions"><button class="state-owned">✓ Owned</button></div>';
+  } else if (wished) {
+    return '<div class="gap-actions"><button class="act-own" onclick="gapAddOwned(\'' + safeName + '\')">✓ Own</button><button class="state-wished">★ Wish</button></div>';
+  } else {
+    return '<div class="gap-actions"><button class="act-wish" onclick="gapAddWishlist(\'' + safeName + '\')">★ Wish</button><button class="act-own" onclick="gapAddOwned(\'' + safeName + '\')">✓ Own</button></div>';
+  }
+}
+
+function gapAddWishlist(name) {
+  WISHLIST_NAMES.add(name);
+  saveWishlist(WISHLIST_NAMES);
+  clearCache();
+  refreshGapActions();
+  renderCollection();
+  renderBrowse();
+}
+
+function gapAddOwned(name) {
+  if (WISHLIST_NAMES.has(name)) WISHLIST_NAMES.delete(name);
+  COLLECTION_NAMES.add(name);
+  saveWishlist(WISHLIST_NAMES);
+  saveCollection(COLLECTION_NAMES);
+  clearCache();
+  refreshGapActions();
+  renderCollection();
+  renderBrowse();
+}
+
+// Update all gap-action buttons in place without re-running analysis
+function refreshGapActions() {
+  document.querySelectorAll('.gap-item').forEach(item => {
+    // Extract paint name from the gap-name element
+    const nameEl = item.querySelector('.gap-name');
+    if (!nameEl) return;
+    // Name is after the label/prefix, extract from text content
+    const text = nameEl.textContent;
+    // Try to match against ALL_PAINTS names
+    for (const p of ALL_PAINTS) {
+      if (text.includes(p.name)) {
+        const actionsEl = item.querySelector('.gap-actions');
+        if (actionsEl) actionsEl.outerHTML = gapActions(p.name);
+        break;
+      }
+    }
+  });
+}
+
 // ================= COLLECTION TAB =================
 function renderCollection() {
   const paints = getPaints(true);
@@ -1017,7 +1081,7 @@ function runGaps() {
     if (msg.type === 'pick') {
       const pct = ((msg.pick.improvement / msg.baseTotal) * 100).toFixed(1);
       const label = msg.round === 1 ? '1st pick' : msg.round === 2 ? '2nd pick' : msg.round === 3 ? '3rd pick' : msg.round + 'th pick';
-      picksHTML += '<div class="gap-item"><span class="swatch" style="background:' + msg.pick.hex + '"></span><div class="gap-meta"><div class="gap-name">' + label + ': ' + esc(msg.pick.name) + ' (' + (msg.pick.brand || msg.pick.type) + ')</div><div class="gap-rec">Impact: <b>+' + msg.pick.improvement.toFixed(1) + '</b> total ΔE (' + pct + '%) · avg ΔE after: ' + msg.pick.newAvg.toFixed(2) + '</div></div></div>';
+      picksHTML += '<div class="gap-item" id="gap-pick-' + msg.round + '"><span class="swatch" style="background:' + msg.pick.hex + '"></span><div class="gap-meta"><div class="gap-name">' + label + ': ' + esc(msg.pick.name) + ' (' + (msg.pick.brand || msg.pick.type) + ')</div><div class="gap-rec">Impact: <b>+' + msg.pick.improvement.toFixed(1) + '</b> total ΔE (' + pct + '%) · avg ΔE after: ' + msg.pick.newAvg.toFixed(2) + '</div></div>' + gapActions(msg.pick.name) + '</div>';
       const picksEl = document.getElementById('gaps-picks');
       if (picksEl) picksEl.innerHTML = picksHTML;
     }
@@ -1190,7 +1254,7 @@ function runCoverage() {
       if (list) {
         list.innerHTML = msg.top5.map((r, idx) => {
           var proj = Math.round(r.count / r.total * msg.uncoveredCount);
-          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + '</span></div><div class="gap-rec">~' + proj + ' of ' + msg.uncoveredCount + ' gaps filled → ~' + ((msg.covered + proj) / msg.total * 100).toFixed(1) + '% coverage</div></div></div>';
+          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + '</span></div><div class="gap-rec">~' + proj + ' of ' + msg.uncoveredCount + ' gaps filled → ~' + ((msg.covered + proj) / msg.total * 100).toFixed(1) + '% coverage</div></div>' + gapActions(r.name) + '</div>';
         }).join('');
       }
     }
@@ -1201,7 +1265,7 @@ function runCoverage() {
       const list = document.getElementById('cov-greedy-list');
       if (list) {
         list.innerHTML = msg.top10.map((r, idx) => {
-          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + ' (' + (r.count/r.total*100).toFixed(0) + '%)</span></div><div class="gap-rec">Recovers ' + r.count + ' of ' + r.total + ' sampled gap colors</div></div></div>';
+          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + ' (' + (r.count/r.total*100).toFixed(0) + '%)</span></div><div class="gap-rec">Recovers ' + r.count + ' of ' + r.total + ' sampled gap colors</div></div>' + gapActions(r.name) + '</div>';
         }).join('');
       }
       progressBar.style.display = 'none';
