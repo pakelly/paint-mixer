@@ -163,6 +163,26 @@
     padding: 6px 10px; border-radius: 8px; font-size: 0.85rem;
   }
   .filter-row input[type=text] { width: 160px; }
+  .color-search-toggle { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; margin-bottom: 8px; user-select: none; font-size: 0.85rem; color: var(--dim); }
+  .color-search-toggle:hover { border-color: var(--accent); color: var(--text); }
+  .color-search-toggle .chevron { font-size: 0.7rem; transition: transform 0.2s; }
+  .color-search-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .color-search-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .color-picker-wrap { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .color-picker-wrap input[type=color] { width: 60px; height: 60px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: none; padding: 0; }
+  .color-picker-wrap input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+  .color-picker-wrap input[type=color]::-webkit-color-swatch { border: none; border-radius: 6px; }
+  .color-search-sliders { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 200px; }
+  .color-search-sliders label { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--dim); }
+  .color-search-sliders input[type=range] { flex: 1; accent-color: var(--accent); }
+  .color-search-sliders span { min-width: 36px; text-align: right; color: var(--text); font-size: 0.75rem; }
+  .btn-clear-color { padding: 6px 14px; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--dim); cursor: pointer; font-size: 0.75rem; }
+  .btn-clear-color:hover { color: var(--text); border-color: var(--accent); }
+  .color-search-preview { margin-top: 10px; font-size: 0.75rem; color: var(--dim); }
+  .paint-card .delta-e { font-size: 0.65rem; color: var(--dim); margin-top: 2px; }
+  .paint-card .delta-e.good { color: var(--good); }
+  .paint-card .delta-e.ok { color: var(--yellow); }
+  .paint-card .delta-e.bad { color: var(--bad); }
   .owned-count { font-size: 0.85rem; color: var(--dim); }
   .owned-count b { color: var(--good); }
   .wish-count { font-size: 0.85rem; color: var(--dim); margin-left: 12px; }
@@ -281,6 +301,7 @@
         <option value="id">Sort: ID</option>
         <option value="hue">Sort: Hue</option>
         <option value="name">Sort: Name</option>
+        <option value="closeness">Sort: Color match</option>
       </select>
       <select id="browse-filter-state" onchange="renderBrowse()">
         <option value="all">All paints</option>
@@ -290,6 +311,26 @@
       </select>
       <span class="owned-count"><b id="browse-owned-count"></b> owned</span>
       <span class="wish-count"><b id="browse-wish-count"></b> wishlist</span>
+    </div>
+    <div class="color-search-toggle" id="color-search-toggle">
+      <span>🎯 Search by color</span>
+      <span class="chevron" id="color-chevron">▶</span>
+    </div>
+    <div class="color-search-panel" id="color-search-panel" style="display:none">
+      <div class="color-search-row">
+        <div class="color-picker-wrap">
+          <input type="color" id="browse-color-picker" value="#808080">
+          <input type="text" id="browse-color-hex" value="#808080" maxlength="7" style="width:90px">
+        </div>
+        <div class="color-search-sliders">
+          <label>Max ΔE: <input type="range" id="browse-max-de" min="5" max="50" value="20" oninput="document.getElementById('browse-max-de-val').textContent=this.value; renderBrowse()"> <span id="browse-max-de-val">20</span></label>
+          <label>Hue ±: <input type="range" id="browse-hue-range" min="0" max="180" value="180" oninput="document.getElementById('browse-hue-val').textContent=this.value+'°'; renderBrowse()"> <span id="browse-hue-val">180°</span></label>
+          <label>Sat ±: <input type="range" id="browse-sat-range" min="0" max="100" value="100" oninput="document.getElementById('browse-sat-val').textContent=this.value+'%'; renderBrowse()"> <span id="browse-sat-val">100%</span></label>
+          <label>Val ±: <input type="range" id="browse-val-range" min="0" max="100" value="100" oninput="document.getElementById('browse-val-val').textContent=this.value+'%'; renderBrowse()"> <span id="browse-val-val">100%</span></label>
+        </div>
+        <button class="btn-clear-color" onclick="clearColorSearch()">Clear</button>
+      </div>
+      <div class="color-search-preview" id="color-search-preview"></div>
     </div>
     <div class="grid" id="browse-grid"></div>
   </div>
@@ -800,8 +841,52 @@ function renderBrowse() {
   if (stateFilter === 'owned') paints = paints.filter(p => p.owned);
   if (stateFilter === 'wishlist') paints = paints.filter(p => p.wished);
   if (stateFilter === 'unowned') paints = paints.filter(p => !p.owned);
+
+  // Color search
+  const colorPanel = document.getElementById('color-search-panel');
+  const colorActive = colorPanel && colorPanel.style.display !== 'none';
+  let targetLab = null, targetHsv = null;
+  if (colorActive) {
+    const hex = document.getElementById('browse-color-hex').value;
+    if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+      const rgb = hexToRgb(hex);
+      targetLab = rgbToLab(rgb);
+      targetHsv = hsvOf(rgb);
+      const maxDE = parseFloat(document.getElementById('browse-max-de').value);
+      const hueRange = parseFloat(document.getElementById('browse-hue-range').value);
+      const satRange = parseFloat(document.getElementById('browse-sat-range').value);
+      const valRange = parseFloat(document.getElementById('browse-val-range').value);
+      paints = paints.filter(p => {
+        const pRgb = hexToRgb(p.hex);
+        const pLab = rgbToLab(pRgb);
+        const dE = deltaE2000(pLab, targetLab);
+        p._dE = dE;
+        const pHsv = hsvOf(pRgb);
+        // Hue is circular
+        let hueDiff = Math.abs(pHsv[0] - targetHsv[0]);
+        if (hueDiff > 180) hueDiff = 360 - hueDiff;
+        const satDiff = Math.abs(pHsv[1] - targetHsv[1]);
+        const valDiff = Math.abs(pHsv[2] - targetHsv[2]);
+        if (dE > maxDE) return false;
+        if (hueDiff > hueRange) return false;
+        if (satDiff > satRange) return false;
+        if (valDiff > valRange) return false;
+        return true;
+      });
+      // Update preview
+      const preview = document.getElementById('color-search-preview');
+      const matchCount = paints.length;
+      const bestMatch = paints.length > 0 ? paints.reduce((a,b) => a._dE < b._dE ? a : b) : null;
+      preview.innerHTML = matchCount > 0
+        ? '<span style="display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:6px;background:' + hex + '"></span>' +
+          matchCount + ' matches' + (bestMatch ? ' · closest: <b>' + esc(bestMatch.name) + '</b> (ΔE ' + bestMatch._dE.toFixed(1) + ')' : '')
+        : '<span style="color:var(--bad)">No matches within filters</span>';
+    }
+  }
+
   if (sortBy === 'name') paints.sort((a,b) => a.name.localeCompare(b.name));
   else if (sortBy === 'hue') paints.sort((a,b) => hsvOf(hexToRgb(a.hex))[0] - hsvOf(hexToRgb(b.hex))[0]);
+  else if (sortBy === 'closeness') paints.sort((a,b) => (a._dE||999) - (b._dE||999));
   else paints.sort((a,b) => Number(a.id||0) - Number(b.id||0));
   document.getElementById('browse-owned-count').textContent = COLLECTION_NAMES.size;
   document.getElementById('browse-wish-count').textContent = WISHLIST_NAMES.size;
@@ -812,11 +897,17 @@ function renderBrowse() {
     if (p.owned) cls += ' owned';
     else if (p.wished) cls += ' wishlist';
     const stateLabel = p.owned ? '✓' : (p.wished ? '★' : '○');
+    let dEHTML = '';
+    if (p._dE !== undefined) {
+      const dECls = p._dE < 10 ? 'good' : (p._dE < 25 ? 'ok' : 'bad');
+      dEHTML = '<div class="delta-e ' + dECls + '">ΔE ' + p._dE.toFixed(1) + '</div>';
+    }
     return '<div class="' + cls + '" data-paint="' + esc(p.name) + '">' +
       '<div class="check">✓</div><div class="wishlist-mark">★</div>' +
       '<div class="bar" style="background:' + p.hex + '"></div>' +
       '<div class="pname">' + esc(p.name) + '</div>' +
       '<div class="ptype">' + p.type + (p.brand ? ' · ' + p.brand : '') + '</div>' +
+      dEHTML +
       '<div class="state-badge">' + stateLabel + '</div></div>';
   }).join('');
 }
@@ -1327,6 +1418,57 @@ document.getElementById('brand-filter').addEventListener('change', () => { clear
 document.getElementById('gaps-run').addEventListener('click', runGaps);
 document.getElementById('cov-run').addEventListener('click', runCoverage);
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+// Color search toggle
+(function() {
+  const toggle = document.getElementById('color-search-toggle');
+  const panel = document.getElementById('color-search-panel');
+  const chevron = document.getElementById('color-chevron');
+  toggle.addEventListener('click', function() {
+    if (panel.style.display === 'none') {
+      panel.style.display = 'block';
+      chevron.textContent = '▼';
+    } else {
+      panel.style.display = 'none';
+      chevron.textContent = '▶';
+      // Reset sort if it was on closeness
+      const sortSel = document.getElementById('browse-sort');
+      if (sortSel.value === 'closeness') { sortSel.value = 'id'; }
+      renderBrowse();
+    }
+  });
+  // Sync color picker and hex input
+  const picker = document.getElementById('browse-color-picker');
+  const hexInput = document.getElementById('browse-color-hex');
+  picker.addEventListener('input', function() {
+    hexInput.value = picker.value;
+    // Auto-switch to closeness sort
+    document.getElementById('browse-sort').value = 'closeness';
+    renderBrowse();
+  });
+  hexInput.addEventListener('input', function() {
+    if (/^#[0-9a-fA-F]{6}$/.test(hexInput.value)) {
+      picker.value = hexInput.value;
+      document.getElementById('browse-sort').value = 'closeness';
+      renderBrowse();
+    }
+  });
+})();
+function clearColorSearch() {
+  document.getElementById('browse-color-picker').value = '#808080';
+  document.getElementById('browse-color-hex').value = '#808080';
+  document.getElementById('browse-max-de').value = 20;
+  document.getElementById('browse-max-de-val').textContent = '20';
+  document.getElementById('browse-hue-range').value = 180;
+  document.getElementById('browse-hue-val').textContent = '180°';
+  document.getElementById('browse-sat-range').value = 100;
+  document.getElementById('browse-sat-val').textContent = '100%';
+  document.getElementById('browse-val-range').value = 100;
+  document.getElementById('browse-val-val').textContent = '100%';
+  const sortSel = document.getElementById('browse-sort');
+  if (sortSel.value === 'closeness') sortSel.value = 'id';
+  renderBrowse();
+}
 doMix();
 </script>
 </body>
