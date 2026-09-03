@@ -388,6 +388,58 @@ function findMix(paints, targetLab, maxPaints, grid) {
   return best;
 }
 
+// ================= VALUE ADJUSTMENT =================
+// After finding a color mix, try blending in the darkest/lightest collection paints
+// to hit the target's lightness. Returns improved result or original if no gain.
+function valueAdjust(baseMix, paints, targetLab) {
+  if (!baseMix.paints || baseMix.dE < 0.5) return baseMix; // already perfect
+
+  // Find darkest and lightest paints in collection by L* value
+  let darkest = null, lightest = null;
+  for (const p of paints) {
+    if (!darkest || p.lab[0] < darkest.lab[0]) darkest = p;
+    if (!lightest || p.lab[0] > lightest.lab[0]) lightest = p;
+  }
+  if (!darkest || !lightest) return baseMix;
+
+  // Don't bother if base mix already includes these
+  const baseNames = new Set(baseMix.paints.map(p => p.name));
+  const candidates = [];
+  if (!baseNames.has(darkest.name)) candidates.push(darkest);
+  if (!baseNames.has(lightest.name) && lightest.name !== darkest.name) candidates.push(lightest);
+  if (candidates.length === 0) return baseMix;
+
+  // Base mix paint objects (need rgb + lab for simulateMix)
+  const basePaintObjs = baseMix.paints.map(bp => {
+    return paints.find(p => p.name === bp.name);
+  }).filter(Boolean);
+  if (basePaintObjs.length !== baseMix.paints.length) return baseMix; // couldn't resolve all
+
+  let best = baseMix;
+  const baseRatios = baseMix.paints.map(p => p.ratio / 100);
+
+  // Sweep: try adding dark/light at various ratios (1-40%)
+  for (const mod of candidates) {
+    for (let tw = 0.01; tw <= 0.40; tw += 0.01) {
+      // Scale down base ratios, add modifier
+      const scale = 1 - tw;
+      const ratios = baseRatios.map(r => r * scale);
+      const paintObjs = basePaintObjs.concat([mod]);
+      ratios.push(tw);
+      const mixLab = simulateMix(paintObjs, ratios);
+      const dE = deltaE2000(mixLab, targetLab);
+      if (dE < best.dE) {
+        const out = labToRgb(mixLab);
+        const parts = baseMix.paints.map((bp, i) => ({ name: bp.name, hex: bp.hex, ratio: Math.round(ratios[i] * 100) }))
+          .concat([{ name: mod.name, hex: mod.hex, ratio: Math.round(tw * 100), valueAdjust: true }])
+          .filter(p => p.ratio > 0);
+        best = { dE, paints: parts, resultHex: rgbToHex(out[0], out[1], out[2]), valueAdjusted: true, modifier: mod.name };
+      }
+    }
+  }
+  return best;
+}
+
 // ================= UI HELPERS =================
 function dEClass(dE) { return dE < 2 ? 'dE-good' : dE < 5 ? 'dE-ok' : 'dE-bad'; }
 function dELabel(dE) {
@@ -398,7 +450,8 @@ function dELabel(dE) {
   return 'very different';
 }
 function mixPartHTML(p) {
-  return '<div class="mix-part"><span class="pct">' + p.ratio + '%</span><span class="swatch-sm" style="background:' + p.hex + '"></span><span class="pname">' + esc(p.name) + '</span></div>';
+  const label = p.valueAdjust ? ' <span class="mode-note">(value adjust)</span>' : '';
+  return '<div class="mix-part"><span class="pct">' + p.ratio + '%</span><span class="swatch-sm" style="background:' + p.hex + '"></span><span class="pname">' + esc(p.name) + label + '</span></div>';
 }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function hsvOf(rgb) {
@@ -423,6 +476,9 @@ function renderMixResults(targetHex) {
   let best2 = null, best3 = null;
   if (mixDepth === '2' || mixDepth === 'both') best2 = findMix(paints, targetLab, 2, 15);
   if (mixDepth === '3' || mixDepth === 'both') best3 = findMix(paints, targetLab, 3, 7);
+  // Auto value-adjust: try adding black/white to improve lightness match
+  if (best2) best2 = valueAdjust(best2, paints, targetLab);
+  if (best3) best3 = valueAdjust(best3, paints, targetLab);
   const ms = Math.round(performance.now() - t0);
 
   document.getElementById('mix-hint').textContent = paints.length + ' paints searched in ' + ms + 'ms — weighted geometric mean in linear RGB, evaluated with CIEDE2000.';
@@ -529,7 +585,8 @@ function runGaps() {
     for (let i = 0; i < ALL_PAINTS.length; i++) {
       const target = ALL_PAINTS[i];
       const tLab = rgbToLab(hexToRgb(target.hex));
-      const best = findMix(mine, tLab, mixDepth, 5);
+      let best = findMix(mine, tLab, mixDepth, 5);
+      best = valueAdjust(best, mine, tLab);
       results.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
       if (i % 20 === 0) progressFill.style.width = (i / ALL_PAINTS.length * 30) + '%';
     }
@@ -557,7 +614,8 @@ function runGaps() {
       const currentResults = [];
       for (const target of ALL_PAINTS) {
         const tLab = rgbToLab(hexToRgb(target.hex));
-        const best = findMix(mine, tLab, mixDepth, 5);
+        let best = findMix(mine, tLab, mixDepth, 5);
+        best = valueAdjust(best, mine, tLab);
         currentResults.push({ target: target.name, targetHex: target.hex, dE: best.dE });
       }
       currentResults.sort((a,b) => b.dE - a.dE);
@@ -583,7 +641,8 @@ function runGaps() {
         let augTotal = 0;
         for (const target of ALL_PAINTS) {
           const tLab = rgbToLab(hexToRgb(target.hex));
-          const best = findMix(aug, tLab, mixDepth, 5);
+          let best = findMix(aug, tLab, mixDepth, 5);
+          best = valueAdjust(best, aug, tLab);
           augTotal += best.dE;
         }
         improvements.push({ name: c.name, hex: c.hex, type: c.type, improvement: currentTotal - augTotal, newAvg: augTotal / ALL_PAINTS.length });
