@@ -613,73 +613,173 @@ function togglePaint(name) {
 }
 
 // ================= GAPS TAB (greedy sequential) =================
+// ================= GAPS TAB (Web Worker) =================
 function runGaps() {
   const btn = document.getElementById('gaps-run');
   const depth = parseInt(document.getElementById('gaps-depth').value);
   const mixDepth = parseInt(document.getElementById('gaps-mix-depth').value);
-  btn.disabled = true;
-  btn.textContent = 'Analyzing…';
-  document.getElementById('gaps-list').innerHTML = '';
-  document.getElementById('gaps-note').textContent = 'Computing baseline…';
+  const listEl = document.getElementById('gaps-list');
+  const noteEl = document.getElementById('gaps-note');
   const progressBar = document.getElementById('gaps-progress');
   const progressFill = document.getElementById('gaps-progress-fill');
+
+  btn.disabled = true;
+  btn.textContent = 'Analyzing…';
+  listEl.innerHTML = '';
+  noteEl.textContent = 'Starting…';
   progressBar.style.display = 'block';
   progressFill.style.width = '0%';
 
-  setTimeout(() => {
-    const tStart = performance.now();
-    let mine = getPaints(true);
-    let ownedSet = new Set(mine.map(p=>p.name));
+  const workerCode = [
+    'const PAINTS = ' + JSON.stringify(ALL_PAINTS) + ';',
+    'const COLLECTION = ' + JSON.stringify([...COLLECTION_NAMES]) + ';',
+    'const DEPTH = ' + depth + ';',
+    'const MIX_DEPTH = ' + mixDepth + ';',
 
-    // --- Section 1: Baseline ---
+    `function hexToRgb(hex){const h=hex.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
+    function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
+    function rgbToXyz(rgb){const[r,g,b]=[srgbToLinear(rgb[0]),srgbToLinear(rgb[1]),srgbToLinear(rgb[2])];return[r*0.4124+g*0.3576+b*0.1805,r*0.2126+g*0.7152+b*0.0722,r*0.0193+g*0.1192+b*0.9505];}
+    function xyzToLab([X,Y,Z]){const Xn=0.95047,Yn=1.0,Zn=1.08883;const f=t=>t>0.008856?Math.cbrt(t):(7.787*t+16/116);return[116*f(X/Xn)-16,500*(f(X/Xn)-f(Y/Yn)),200*(f(Y/Yn)-f(Z/Zn))];}
+    function rgbToLab(rgb){return xyzToLab(rgbToXyz(rgb));}
+    function rgbLinear(rgb){return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])];}
+    function linearToSrgb(c){return c<=0.0031308?c*12.92:1.055*Math.pow(c,1/2.4)-0.055;}
+    function ciede2000(l1,l2){const[L1,a1,b1]=l1,[L2,a2,b2]=l2;const C1=Math.hypot(a1,b1),C2=Math.hypot(a2,b2);const Cbar=(C1+C2)/2,Cbar7=Math.pow(Cbar,7);const G=0.5*(1-Math.sqrt(Cbar7/(Cbar7+Math.pow(25,7))));const a1p=a1*(1+G),a2p=a2*(1+G);const C1p=Math.hypot(a1p,b1),C2p=Math.hypot(a2p,b2);let h1p=Math.atan2(b1,a1p)*180/Math.PI;if(h1p<0)h1p+=360;let h2p=Math.atan2(b2,a2p)*180/Math.PI;if(h2p<0)h2p+=360;const dLp=L2-L1,dCp=C2p-C1p;let dhp=0;if(C1p*C2p!==0){let d=h2p-h1p;if(d>180)d-=360;else if(d<-180)d+=360;dhp=d;}const dHp=2*Math.sqrt(C1p*C2p)*Math.sin(dhp*Math.PI/360);const Lbarp=(L1+L2)/2,Cbarp=(C1p+C2p)/2;let hbarp=0;if(C1p*C2p!==0){hbarp=(h1p+h2p)/2;if(Math.abs(h1p-h2p)>180){if(h1p+h2p<360)hbarp+=180;else hbarp-=180;}}const T=1-0.17*Math.cos((hbarp-30)*Math.PI/180)+0.24*Math.cos(2*hbarp*Math.PI/180)-0.32*Math.cos((3*hbarp+6)*Math.PI/180)-0.20*Math.cos((4*hbarp-63)*Math.PI/180);const dTheta=30*Math.exp(-Math.pow((hbarp-275)/25,2));const RC=2*Math.sqrt(Math.pow(Cbarp,7)/(Math.pow(Cbarp,7)+Math.pow(25,7)));const SL=1+(0.015*Math.pow(Lbarp-50,2))/Math.sqrt(20+Math.pow(Lbarp-50,2));const SC=1+0.045*Cbarp;const SH=1+0.015*Cbarp*T;const RT=-Math.sin(2*dTheta*Math.PI/180)*RC;const dLpSL=dLp/SL,dCpSC=dCp/SC,dHpSH=dHp/SH;return Math.sqrt(dLpSL*dLpSL+dCpSC*dCpSC+dHpSH*dHpSH+RT*dCpSC*dHpSH);}
+    const eps=1e-6;
+    function simulateMix(paints,ratios){const logSum=[0,0,0];for(let i=0;i<paints.length;i++){const r=ratios[i];if(r<=0)continue;const lin=rgbLinear(paints[i].rgb);logSum[0]+=r*Math.log(lin[0]+eps);logSum[1]+=r*Math.log(lin[1]+eps);logSum[2]+=r*Math.log(lin[2]+eps);}const out=[Math.exp(logSum[0]),Math.exp(logSum[1]),Math.exp(logSum[2])];return rgbToLab([linearToSrgb(out[0]),linearToSrgb(out[1]),linearToSrgb(out[2])]);}`,
+
+    `const allPaints = PAINTS.map(p=>{const rgb=hexToRgb(p.hex);return{...p,rgb,lab:rgbToLab(rgb)};});
+    const collNames = new Set(COLLECTION);
+    let mine = allPaints.filter(p => collNames.has(p.name));
+    let ownedSet = new Set(mine.map(p=>p.name));`,
+
+    `function findMix(paints, targetLab, maxPaints, grid) {
+      maxPaints = maxPaints || 3;
+      grid = grid || 5;
+      const n = paints.length;
+      let best = { dE: Infinity };
+      const withDist = paints.map(p => ({ ...p, d: ciede2000(p.lab, targetLab) }));
+      withDist.sort((a,b) => a.d - b.d);
+      const shortlist = withDist.slice(0, 25);
+      const MAX_PAIRS = 12;
+      const bestPairs = [];
+      const pushPair = p => {
+        if (bestPairs.length < MAX_PAIRS) { bestPairs.push(p); bestPairs.sort((a,b)=>a.dE-b.dE); }
+        else if (p.dE < bestPairs[MAX_PAIRS-1].dE) { bestPairs[MAX_PAIRS-1]=p; bestPairs.sort((a,b)=>a.dE-b.dE); }
+      };
+      for (let i=0; i<n; i++) {
+        for (let j=i; j<n; j++) {
+          for (let k=0; k<=grid; k++) {
+            const w1=k/grid, w2=1-w1;
+            if (w1===0 && i!==j) continue;
+            if (w2===0 && i!==j) continue;
+            const mixLab = simulateMix([paints[i],paints[j]], [w1,w2]);
+            const dE = ciede2000(mixLab, targetLab);
+            if (dE < best.dE) best = { dE, paints: [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(w1*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(w2*100)}] };
+            pushPair({i,j,w1,w2,dE});
+          }
+        }
+      }
+      if (maxPaints >= 3) {
+        const nameHexIdx = new Map(paints.map((p,idx)=>[p.name+'|'+p.hex, idx]));
+        const thirdGrid = [0.15,0.25,0.35,0.45];
+        for (const pair of bestPairs) {
+          const { i, j, w1, w2 } = pair;
+          for (const k of shortlist) {
+            const ki = nameHexIdx.get(k.name+'|'+k.hex);
+            if (ki===undefined || ki===i || ki===j) continue;
+            for (const tw of thirdGrid) {
+              const a=w1*(1-tw), b=w2*(1-tw), c=tw;
+              const mixLab = simulateMix([paints[i],paints[j],paints[ki]], [a,b,c]);
+              const dE = ciede2000(mixLab, targetLab);
+              if (dE < best.dE) {
+                const parts = [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(a*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(b*100)},{name:paints[ki].name,hex:paints[ki].hex,ratio:Math.round(c*100)}].filter(p=>p.ratio>0);
+                best = { dE, paints: parts };
+              }
+            }
+          }
+        }
+      }
+      return best;
+    }`,
+
+    `function valueAdjust(baseMix, paints, targetLab) {
+      if (!baseMix.paints || baseMix.dE < 0.5) return baseMix;
+      let darkest = null, lightest = null;
+      for (const p of paints) {
+        if (!darkest || p.lab[0] < darkest.lab[0]) darkest = p;
+        if (!lightest || p.lab[0] > lightest.lab[0]) lightest = p;
+      }
+      if (!darkest || !lightest) return baseMix;
+      const baseNames = new Set(baseMix.paints.map(p => p.name));
+      const candidates = [];
+      if (!baseNames.has(darkest.name)) candidates.push(darkest);
+      if (!baseNames.has(lightest.name) && lightest.name !== darkest.name) candidates.push(lightest);
+      if (candidates.length === 0) return baseMix;
+      const basePaintObjs = baseMix.paints.map(bp => paints.find(p => p.name === bp.name)).filter(Boolean);
+      if (basePaintObjs.length !== baseMix.paints.length) return baseMix;
+      let best = baseMix;
+      const baseRatios = baseMix.paints.map(p => p.ratio / 100);
+      for (const mod of candidates) {
+        for (let tw = 0.01; tw <= 0.40; tw += 0.01) {
+          const scale = 1 - tw;
+          const ratios = baseRatios.map(r => r * scale);
+          const paintObjs = basePaintObjs.concat([mod]);
+          ratios.push(tw);
+          const mixLab = simulateMix(paintObjs, ratios);
+          const dE = ciede2000(mixLab, targetLab);
+          if (dE < best.dE) {
+            const parts = baseMix.paints.map((bp, i) => ({ name: bp.name, hex: bp.hex, ratio: Math.round(ratios[i] * 100) }))
+              .concat([{ name: mod.name, hex: mod.hex, ratio: Math.round(tw * 100), valueAdjust: true }])
+              .filter(p => p.ratio > 0);
+            best = { dE, paints: parts, valueAdjusted: true, modifier: mod.name };
+          }
+        }
+      }
+      return best;
+    }`,
+
+    `// Phase 1: Baseline
+    self.postMessage({ type: 'status', text: 'Computing baseline (' + PAINTS.length + ' targets)…', progress: 0 });
     const results = [];
-    for (let i = 0; i < ALL_PAINTS.length; i++) {
-      const target = ALL_PAINTS[i];
+    for (let i = 0; i < PAINTS.length; i++) {
+      const target = PAINTS[i];
       const tLab = rgbToLab(hexToRgb(target.hex));
-      let best = findMix(mine, tLab, mixDepth, 5);
+      let best = findMix(mine, tLab, MIX_DEPTH, 5);
       best = valueAdjust(best, mine, tLab);
       results.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
-      if (i % 20 === 0) progressFill.style.width = (i / ALL_PAINTS.length * 30) + '%';
+      if (i % 10 === 0) self.postMessage({ type: 'progress', progress: (i / PAINTS.length * 30), text: 'Baseline: ' + (i+1) + '/' + PAINTS.length });
     }
     results.sort((a,b) => b.dE - a.dE);
-    const worst = results.slice(0, 8);
     let currentTotal = results.reduce((s,r) => s + r.dE, 0);
     const baseAvgDE = currentTotal / results.length;
     const baseTotal = currentTotal;
+    const worst = results.slice(0, 8);
+    self.postMessage({ type: 'baseline', worst, baseAvgDE, totalPaints: PAINTS.length });`,
 
-    let html = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + ALL_PAINTS.length + ': ' + baseAvgDE.toFixed(2) + ')</span></div>';
-    html += worst.map(r => {
-      const mixStr = r.mix && r.mix.length ? r.mix.map(p=>p.name + ' ' + p.ratio + '%').join(' + ') : 'no mix found';
-      return '<div class="gap-item"><span class="swatch" style="background:' + r.targetHex + '"></span><div class="gap-meta"><div class="gap-name">' + esc(r.target) + ' <span class="dE-bad">ΔE ' + r.dE.toFixed(1) + '</span></div><div class="gap-rec">Best with collection: ' + esc(mixStr) + '</div></div></div>';
-    }).join('');
-
-    // --- Section 2: Greedy sequential selection ---
-    html += '<div class="gap-section-title" style="margin-top:20px">Recommended paints to add</div>';
-    html += '<div class="note" style="margin-bottom:10px">Each pick is the best single paint for the remaining gaps after previous picks (greedy sequential). Coarse filter: top 25 candidates per round.</div>';
-
+    `// Phase 2: Greedy sequential selection
     const picks = [];
-    const totalRounds = depth;
-
-    for (let round = 0; round < totalRounds; round++) {
-      // Re-compute current gaps with augmented collection
+    for (let round = 0; round < DEPTH; round++) {
+      // Re-compute current gaps
       const currentResults = [];
-      for (const target of ALL_PAINTS) {
+      for (let i = 0; i < PAINTS.length; i++) {
+        const target = PAINTS[i];
         const tLab = rgbToLab(hexToRgb(target.hex));
-        let best = findMix(mine, tLab, mixDepth, 5);
+        let best = findMix(mine, tLab, MIX_DEPTH, 5);
         best = valueAdjust(best, mine, tLab);
         currentResults.push({ target: target.name, targetHex: target.hex, dE: best.dE });
+        if (i % 20 === 0) self.postMessage({ type: 'progress', progress: 30 + (round / DEPTH) * 10, text: 'Round ' + (round+1) + '/' + DEPTH + ' — re-evaluating gaps (' + (i+1) + '/' + PAINTS.length + ')' });
       }
       currentResults.sort((a,b) => b.dE - a.dE);
       const currentWorst = currentResults.slice(0, 8);
       currentTotal = currentResults.reduce((s,r) => s + r.dE, 0);
 
-      // Coarse filter: rank unowned by proximity to current worst gaps
-      const unowned = ALL_PAINTS.filter(p => !ownedSet.has(p.name));
+      // Coarse filter
+      const unowned = allPaints.filter(p => !ownedSet.has(p.name));
       const worstLabs = currentWorst.map(w => rgbToLab(hexToRgb(w.targetHex)));
       const scored = unowned.map(p => {
         const pLab = rgbToLab(hexToRgb(p.hex));
-        const avgDist = worstLabs.reduce((s,t) => s + deltaE2000(pLab, t), 0) / worstLabs.length;
-        return { name: p.name, hex: p.hex, type: p.type, score: avgDist };
+        const avgDist = worstLabs.reduce((s,t) => s + ciede2000(pLab, t), 0) / worstLabs.length;
+        return { name: p.name, hex: p.hex, type: p.type, brand: p.brand, score: avgDist };
       });
       scored.sort((a,b) => a.score - b.score);
       const candidates = scored.slice(0, 25);
@@ -688,46 +788,85 @@ function runGaps() {
       const improvements = [];
       for (let ci = 0; ci < candidates.length; ci++) {
         const c = candidates[ci];
-        const aug = mine.concat([{ name: c.name, hex: c.hex, type: c.type, rgb: hexToRgb(c.hex), lab: rgbToLab(hexToRgb(c.hex)) }]);
+        const aug = mine.concat([{ name: c.name, hex: c.hex, type: c.type, brand: c.brand, rgb: hexToRgb(c.hex), lab: rgbToLab(hexToRgb(c.hex)) }]);
         let augTotal = 0;
-        for (const target of ALL_PAINTS) {
+        for (const target of PAINTS) {
           const tLab = rgbToLab(hexToRgb(target.hex));
-          let best = findMix(aug, tLab, mixDepth, 5);
+          let best = findMix(aug, tLab, MIX_DEPTH, 5);
           best = valueAdjust(best, aug, tLab);
           augTotal += best.dE;
         }
-        improvements.push({ name: c.name, hex: c.hex, type: c.type, improvement: currentTotal - augTotal, newAvg: augTotal / ALL_PAINTS.length });
-        const pct = 30 + (round / totalRounds) * 70 + ((ci + 1) / candidates.length) * (70 / totalRounds);
-        progressFill.style.width = pct + '%';
-        document.getElementById('gaps-note').textContent = 'Round ' + (round+1) + '/' + totalRounds + ' — testing candidate ' + (ci+1) + '/' + candidates.length + '…';
+        improvements.push({ name: c.name, hex: c.hex, type: c.type, brand: c.brand, improvement: currentTotal - augTotal, newAvg: augTotal / PAINTS.length });
+        const pct = 40 + (round / DEPTH) * 60 + ((ci + 1) / candidates.length) * (60 / DEPTH);
+        self.postMessage({ type: 'progress', progress: pct, text: 'Round ' + (round+1) + '/' + DEPTH + ' — candidate ' + (ci+1) + '/' + candidates.length + ' (' + c.name + ')' });
       }
       improvements.sort((a,b) => b.improvement - a.improvement);
       const best = improvements[0];
-
       if (!best || best.improvement <= 0) break;
-
       picks.push(best);
-      // Add to collection for next round
       mine = mine.concat([{ name: best.name, hex: best.hex, type: best.type, rgb: hexToRgb(best.hex), lab: rgbToLab(hexToRgb(best.hex)) }]);
       ownedSet.add(best.name);
+      self.postMessage({ type: 'pick', pick: best, round: round + 1, baseTotal });
     }
 
-    html += picks.map((r, i) => {
-      const pct = ((r.improvement / baseTotal) * 100).toFixed(1);
-      const label = i === 0 ? '1st pick' : i === 1 ? '2nd pick' : i === 2 ? '3rd pick' : (i+1) + 'th pick';
-      return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">' + label + ': ' + esc(r.name) + ' (' + r.type + ')</div><div class="gap-rec">Impact: <b>+' + r.improvement.toFixed(1) + '</b> total ΔE (' + pct + '%) · avg ΔE after this pick: ' + r.newAvg.toFixed(2) + '</div></div></div>';
-    }).join('');
+    self.postMessage({ type: 'done', picks, baseAvgDE, totalPaints: PAINTS.length });`
+  ].join('\\n');
 
-    const totalMs = Math.round(performance.now() - tStart);
-    html += '<div class="note" style="margin-top:8px">Analysis completed in ' + (totalMs/1000).toFixed(1) + 's</div>';
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  const worker = new Worker(URL.createObjectURL(blob));
+  let baselineHTML = '';
+  let picksHTML = '';
 
-    document.getElementById('gaps-list').innerHTML = html;
+  worker.onmessage = function(e) {
+    const msg = e.data;
+
+    if (msg.type === 'status') {
+      noteEl.textContent = msg.text;
+      progressFill.style.width = msg.progress + '%';
+    }
+
+    if (msg.type === 'progress') {
+      noteEl.textContent = msg.text;
+      progressFill.style.width = msg.progress + '%';
+    }
+
+    if (msg.type === 'baseline') {
+      baselineHTML = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + msg.totalPaints + ': ' + msg.baseAvgDE.toFixed(2) + ')</span></div>';
+      baselineHTML += msg.worst.map(r => {
+        const mixStr = r.mix && r.mix.length ? r.mix.map(p => p.name + ' ' + p.ratio + '%' + (p.valueAdjust ? ' (val)' : '')).join(' + ') : 'no mix found';
+        return '<div class="gap-item"><span class="swatch" style="background:' + r.targetHex + '"></span><div class="gap-meta"><div class="gap-name">' + esc(r.target) + ' <span class="dE-bad">ΔE ' + r.dE.toFixed(1) + '</span></div><div class="gap-rec">Best with collection: ' + esc(mixStr) + '</div></div></div>';
+      }).join('');
+      baselineHTML += '<div class="gap-section-title" style="margin-top:20px">Recommended paints to add</div><div class="note" style="margin-bottom:10px">Greedy sequential — each pick targets the biggest remaining gap.</div><div id="gaps-picks"></div>';
+      listEl.innerHTML = baselineHTML;
+    }
+
+    if (msg.type === 'pick') {
+      const pct = ((msg.pick.improvement / msg.baseTotal) * 100).toFixed(1);
+      const label = msg.round === 1 ? '1st pick' : msg.round === 2 ? '2nd pick' : msg.round === 3 ? '3rd pick' : msg.round + 'th pick';
+      picksHTML += '<div class="gap-item"><span class="swatch" style="background:' + msg.pick.hex + '"></span><div class="gap-meta"><div class="gap-name">' + label + ': ' + esc(msg.pick.name) + ' (' + (msg.pick.brand || msg.pick.type) + ')</div><div class="gap-rec">Impact: <b>+' + msg.pick.improvement.toFixed(1) + '</b> total ΔE (' + pct + '%) · avg ΔE after: ' + msg.pick.newAvg.toFixed(2) + '</div></div></div>';
+      const picksEl = document.getElementById('gaps-picks');
+      if (picksEl) picksEl.innerHTML = picksHTML;
+    }
+
+    if (msg.type === 'done') {
+      noteEl.textContent = 'Analysis complete.';
+      progressFill.style.width = '100%';
+      progressBar.style.display = 'none';
+      btn.disabled = false;
+      btn.textContent = 'Run analysis';
+      worker.terminate();
+    }
+  };
+
+  worker.onerror = function(err) {
+    noteEl.textContent = 'Error: ' + err.message;
     btn.disabled = false;
     btn.textContent = 'Run analysis';
-    document.getElementById('gaps-note').textContent = '';
     progressBar.style.display = 'none';
-  }, 50);
+    worker.terminate();
+  };
 }
+
 
 // ================= COVERAGE TAB (Web Worker + precomputed gamut) =================
 const COV_THRESHOLD = 3;
