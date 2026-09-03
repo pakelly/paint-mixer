@@ -1054,7 +1054,7 @@ function runGaps() {
     }
 
     self.postMessage({ type: 'done', picks, baseAvgDE, totalPaints: PAINTS.length });`
-  ].join('\\n');
+  ].join('\n');
 
   const blob = new Blob([workerCode], { type: 'application/javascript' });
   const worker = new Worker(URL.createObjectURL(blob));
