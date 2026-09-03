@@ -1,0 +1,147 @@
+{
+  "totalPaints": 281,
+  "collectionSize": 34,
+  "threshold": 3,
+  "gridPoints": 2400,
+  "achievableGamut": 1603,
+  "achievablePct": "66.8",
+  "covered": 832,
+  "coveragePct": 51.9,
+  "gaps": 771,
+  "gapPct": "48.1",
+  "coverageByHue": {
+    "0": {
+      "total": 164,
+      "covered": 59,
+      "pct": 36
+    },
+    "30": {
+      "total": 166,
+      "covered": 93,
+      "pct": 56
+    },
+    "60": {
+      "total": 139,
+      "covered": 80,
+      "pct": 57.6
+    },
+    "90": {
+      "total": 122,
+      "covered": 65,
+      "pct": 53.3
+    },
+    "120": {
+      "total": 119,
+      "covered": 81,
+      "pct": 68.1
+    },
+    "150": {
+      "total": 118,
+      "covered": 78,
+      "pct": 66.1
+    },
+    "180": {
+      "total": 145,
+      "covered": 99,
+      "pct": 68.3
+    },
+    "210": {
+      "total": 144,
+      "covered": 86,
+      "pct": 59.7
+    },
+    "240": {
+      "total": 116,
+      "covered": 37,
+      "pct": 31.9
+    },
+    "270": {
+      "total": 113,
+      "covered": 45,
+      "pct": 39.8
+    },
+    "300": {
+      "total": 93,
+      "covered": 42,
+      "pct": 45.2
+    },
+    "330": {
+      "total": 164,
+      "covered": 67,
+      "pct": 40.9
+    }
+  },
+  "topPicks": [
+    {
+      "name": "Burgundy",
+      "hex": "#6A0002",
+      "brand": "Pro Acryl",
+      "recovery": 15,
+      "recoveryPct": 25
+    },
+    {
+      "name": "Dark Purple",
+      "hex": "#5A005A",
+      "brand": "Pro Acryl",
+      "recovery": 15,
+      "recoveryPct": 25
+    },
+    {
+      "name": "Dark Blue",
+      "hex": "#08085A",
+      "brand": "Pro Acryl",
+      "recovery": 14,
+      "recoveryPct": 23.3
+    },
+    {
+      "name": "Magenta",
+      "hex": "#9C004A",
+      "brand": "Pro Acryl",
+      "recovery": 14,
+      "recoveryPct": 23.3
+    },
+    {
+      "name": "Wicked Pink",
+      "hex": "#A91269",
+      "brand": "Army Painter",
+      "recovery": 10,
+      "recoveryPct": 16.7
+    },
+    {
+      "name": "Mahogany",
+      "hex": "#630808",
+      "brand": "Pro Acryl",
+      "recovery": 9,
+      "recoveryPct": 15
+    },
+    {
+      "name": "Dark Crimson",
+      "hex": "#3E1714",
+      "brand": "Pro Acryl",
+      "recovery": 8,
+      "recoveryPct": 13.3
+    },
+    {
+      "name": "Vivid Volt",
+      "hex": "#D1E23C",
+      "brand": "Army Painter",
+      "recovery": 7,
+      "recoveryPct": 11.7
+    },
+    {
+      "name": "Black Brown",
+      "hex": "#3A1A08",
+      "brand": "Pro Acryl",
+      "recovery": 7,
+      "recoveryPct": 11.7
+    },
+    {
+      "name": "Blue Black",
+      "hex": "#0A0A2A",
+      "brand": "Pro Acryl",
+      "recovery": 7,
+      "recoveryPct": 11.7
+    }
+  ],
+  "timestamp": "2026-09-03T14:26:04.440Z"
+}
