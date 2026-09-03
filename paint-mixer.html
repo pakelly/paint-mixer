@@ -90,10 +90,10 @@
   .paint-card.wishlist { border-color: var(--yellow); border-style: dashed; }
   .paint-card.wishlist .check { display: none; }
   .paint-card .wishlist-mark {
-    position: absolute; top: 6px; right: 6px; width: 18px; height: 18px;
+    position: absolute; top: 6px; right: 6px; width: 20px; height: 20px;
     border-radius: 50%; display: none;
-    align-items: center; justify-content: center; font-size: 0.65rem; color: #0b1a24; font-weight: 700;
-    background: var(--yellow);
+    align-items: center; justify-content: center; font-size: 0.75rem; color: #000; font-weight: 700;
+    background: #f5a623; border: 1.5px solid #000;
   }
   .paint-card.wishlist .wishlist-mark { display: flex; }
   .paint-card.owned .wishlist-mark { display: none; }
@@ -106,7 +106,10 @@
     border: 1px solid var(--border);
   }
   .paint-card.owned .state-badge { background: var(--good); color: #0b1a24; border-color: var(--good); }
-  .paint-card.wishlist .state-badge { background: var(--yellow); color: #0b1a24; border-color: var(--yellow); }
+  .paint-card.wishlist .state-badge {
+    background: #f5a623; color: #000; border: 1.5px solid #000;
+    font-size: 0.8rem; width: 22px; height: 22px;
+  }
   .wish-section { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 16px; }
   .wish-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
   .wish-section .wish-hint { font-size: 0.78rem; color: var(--dim); margin-bottom: 10px; }
@@ -184,12 +187,13 @@
         <label>Hex</label>
         <input type="text" id="target-hex" value="#8b5a2b" maxlength="7">
       </div>
-      <div class="collection-toggle">
-        <label class="toggle">
-          <input type="checkbox" id="use-collection" checked>
-          <span class="slider"></span>
-        </label>
-        <span class="mode-note">Use my collection only</span>
+      <div class="field">
+        <label>Paint pool</label>
+        <select id="paint-pool">
+          <option value="owned" selected>Owned</option>
+          <option value="owned-wish">Owned + Wishlist</option>
+          <option value="all">All paints</option>
+        </select>
       </div>
       <div class="field">
         <label>Mix depth</label>
@@ -237,7 +241,6 @@
       <h3> Wishlist (<span id="wish-count">0</span> paints)</h3>
       <div class="wish-hint">Paints you're considering adding. Click a swatch to mix-test it. Use the browse tab to add more.</div>
       <div class="wish-controls">
-        <label class="wish-toggle-label"><input type="checkbox" id="wish-include-analysis"> Include in analysis (treat as owned)</label>
         <button class="secondary" id="wish-promote-all" onclick="promoteAllWishlist()">Move all to owned</button>
         <button class="secondary" id="wish-clear" onclick="clearWishlist()">Clear wishlist</button>
       </div>
@@ -363,16 +366,17 @@ let WISHLIST_NAMES = loadWishlist();
 
 let paintCache = null;
 let paintCacheKey = '';
-function getPaints(useCollection) {
+function getPaints(poolMode) {
   const brand = document.getElementById('brand-filter') ? document.getElementById('brand-filter').value : 'all';
-  const cacheKey = useCollection + '|' + brand;
+  const cacheKey = (poolMode || 'owned') + '|' + brand;
   if (paintCache && paintCacheKey === cacheKey) return paintCache;
-  let source = useCollection ? ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name)) : ALL_PAINTS;
-  // If including wishlist in analysis, merge them in
-  const includeWish = document.getElementById('wish-include-analysis') && document.getElementById('wish-include-analysis').checked;
-  if (useCollection && includeWish) {
+  let source;
+  if (poolMode === 'all') {
+    source = ALL_PAINTS;
+  } else if (poolMode === 'owned-wish') {
     source = ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name) || WISHLIST_NAMES.has(p.name));
-  } else if (useCollection) {
+  } else {
+    // owned (default)
     source = ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name));
   }
   if (brand !== 'all') source = source.filter(p => p.brand === brand);
@@ -581,9 +585,9 @@ function hsvOf(rgb) {
 }
 
 function renderMixResults(targetHex) {
-  const useCollection = document.getElementById('use-collection').checked;
+  const poolMode = document.getElementById('paint-pool') ? document.getElementById('paint-pool').value : 'owned';
   const mixDepth = document.getElementById('mix-depth').value;
-  const paints = getPaints(useCollection);
+  const paints = getPaints(poolMode);
   const targetRgb = hexToRgb(targetHex);
   const targetLab = rgbToLab(targetRgb);
   const t0 = performance.now();
@@ -769,10 +773,15 @@ function runGaps() {
   progressBar.style.display = 'block';
   progressFill.style.width = '0%';
 
-  const includeWish = document.getElementById('wish-include-analysis') && document.getElementById('wish-include-analysis').checked;
-  const collectionForAnalysis = includeWish
-    ? [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])]
-    : [...COLLECTION_NAMES];
+  const poolMode = document.getElementById('paint-pool') ? document.getElementById('paint-pool').value : 'owned';
+  let collectionForAnalysis;
+  if (poolMode === 'all') {
+    collectionForAnalysis = ALL_PAINTS.map(p => p.name);
+  } else if (poolMode === 'owned-wish') {
+    collectionForAnalysis = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])];
+  } else {
+    collectionForAnalysis = [...COLLECTION_NAMES];
+  }
 
   const workerCode = [
     'const PAINTS = ' + JSON.stringify(ALL_PAINTS) + ';',
@@ -1039,10 +1048,15 @@ function runCoverage() {
   greedyEl.innerHTML = '';
   worstEl.innerHTML = '';
 
-  const includeWishCov = document.getElementById('wish-include-analysis') && document.getElementById('wish-include-analysis').checked;
-  const collectionForCov = includeWishCov
-    ? [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])]
-    : [...COLLECTION_NAMES];
+  const poolModeCov = document.getElementById('paint-pool') ? document.getElementById('paint-pool').value : 'owned';
+  let collectionForCov;
+  if (poolModeCov === 'all') {
+    collectionForCov = ALL_PAINTS.map(p => p.name);
+  } else if (poolModeCov === 'owned-wish') {
+    collectionForCov = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])];
+  } else {
+    collectionForCov = [...COLLECTION_NAMES];
+  }
   const workerCode = [
     'const PAINTS = ' + JSON.stringify(ALL_PAINTS.map(p => ({ name: p.name, hex: p.hex, brand: p.brand, type: p.type }))) + ';',
     'const GAMUT = ' + JSON.stringify(PRECOMPUTED_GAMUT) + ';',
@@ -1221,8 +1235,7 @@ document.getElementById('mix-btn').addEventListener('click', doMix);
 document.getElementById('target-hex').addEventListener('keydown', e => { if (e.key === 'Enter') doMix(); });
 document.getElementById('target-picker').addEventListener('input', e => { document.getElementById('target-hex').value = e.target.value; doMix(); });
 document.getElementById('target-hex').addEventListener('input', e => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) { document.getElementById('target-picker').value = v; doMix(); } });
-document.getElementById('use-collection').addEventListener('change', () => { clearCache(); doMix(); });
-document.getElementById('wish-include-analysis').addEventListener('change', () => { clearCache(); doMix(); });
+document.getElementById('paint-pool').addEventListener('change', () => { clearCache(); doMix(); });
 document.getElementById('mix-depth').addEventListener('change', () => { doMix(); });
 document.getElementById('brand-filter').addEventListener('change', () => { clearCache(); doMix(); });
 document.getElementById('gaps-run').addEventListener('click', runGaps);
