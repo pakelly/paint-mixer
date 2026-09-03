@@ -535,6 +535,16 @@ function renderMixResults(targetHex) {
   const hsv = hsvOf(targetRgb);
   let blocks = '<div class="result"><span class="swatch" style="background:' + targetHex + '"></span><div class="result-info"><div class="result-title">Target</div><div class="result-detail">' + targetHex + ' · H=' + hsv[0].toFixed(0) + '° S=' + (hsv[1]*100).toFixed(0) + '% V=' + (hsv[2]*100).toFixed(0) + '%</div></div></div>';
 
+  // Closest single bottle (no mixing)
+  let closest = { dE: Infinity };
+  for (const p of paints) {
+    const dE = deltaE2000(p.lab, targetLab);
+    if (dE < closest.dE) closest = { dE, paint: p };
+  }
+  if (closest.paint) {
+    blocks += '<div class="result"><span class="swatch" style="background:' + closest.paint.hex + '"></span><div class="result-info"><div class="result-title">Closest single bottle</div><div class="result-detail">' + esc(closest.paint.name) + ' · <b>' + closest.paint.hex + '</b> · ΔE <span class="' + dEClass(closest.dE) + '">' + closest.dE.toFixed(1) + '</span> (' + dELabel(closest.dE) + ')</div></div></div>';
+  }
+
   if (best2 && best2.paints) {
     blocks += '<div class="result"><span class="swatch" style="background:' + best2.resultHex + '"></span><div class="result-info"><div class="result-title">Best 2-paint mix</div><div class="result-detail">Predicted <b>' + best2.resultHex + '</b> · ΔE <span class="' + dEClass(best2.dE) + '">' + best2.dE.toFixed(1) + '</span> (' + dELabel(best2.dE) + ')</div></div><div class="swatch-row">' + best2.paints.map(mixPartHTML).join('') + '</div></div>';
   }
