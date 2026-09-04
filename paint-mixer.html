@@ -447,6 +447,8 @@ function getPaints(poolMode) {
     // owned (default)
     source = ALL_PAINTS.filter(p => COLLECTION_NAMES.has(p.name));
   }
+  // Exclude Metallics from mixing analysis — they don't behave like regular pigments
+  source = source.filter(p => p.type !== 'Metallic');
   if (brand !== 'all') source = source.filter(p => p.brand === brand);
   paintCache = source.map(p => ({ ...p, rgb: hexToRgb(p.hex), lab: rgbToLab(hexToRgb(p.hex)) }));
   paintCacheKey = cacheKey;
@@ -846,7 +848,9 @@ function renderBrowse() {
   const colorPanel = document.getElementById('color-search-panel');
   const colorActive = colorPanel && colorPanel.style.display !== 'none';
   let targetLab = null, targetHsv = null;
+  // Exclude Metallics from color search — they don't match well via ΔE
   if (colorActive) {
+    paints = paints.filter(p => p.type !== 'Metallic');
     const hex = document.getElementById('browse-color-hex').value;
     if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
       const rgb = hexToRgb(hex);
@@ -950,18 +954,20 @@ function runGaps() {
   progressBar.style.display = 'block';
   progressFill.style.width = '0%';
 
+  // Exclude Metallics from gap analysis
+  const analysisPaints = ALL_PAINTS.filter(p => p.type !== 'Metallic');
   const poolMode = document.getElementById('gaps-pool') ? document.getElementById('gaps-pool').value : 'owned';
   let collectionForAnalysis;
   if (poolMode === 'all') {
-    collectionForAnalysis = ALL_PAINTS.map(p => p.name);
+    collectionForAnalysis = analysisPaints.map(p => p.name);
   } else if (poolMode === 'owned-wish') {
-    collectionForAnalysis = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])];
+    collectionForAnalysis = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])].filter(n => analysisPaints.some(p => p.name === n));
   } else {
-    collectionForAnalysis = [...COLLECTION_NAMES];
+    collectionForAnalysis = [...COLLECTION_NAMES].filter(n => analysisPaints.some(p => p.name === n));
   }
 
   const workerCode = [
-    'const PAINTS = ' + JSON.stringify(ALL_PAINTS) + ';',
+    'const PAINTS = ' + JSON.stringify(analysisPaints) + ';',
     'const COLLECTION = ' + JSON.stringify(collectionForAnalysis) + ';',
     'const DEPTH = ' + depth + ';',
     'const MIX_DEPTH = ' + mixDepth + ';',
@@ -1225,17 +1231,19 @@ function runCoverage() {
   greedyEl.innerHTML = '';
   worstEl.innerHTML = '';
 
+  // Exclude Metallics from coverage analysis
+  const covPaints = ALL_PAINTS.filter(p => p.type !== 'Metallic');
   const poolModeCov = document.getElementById('cov-pool') ? document.getElementById('cov-pool').value : 'owned';
   let collectionForCov;
   if (poolModeCov === 'all') {
-    collectionForCov = ALL_PAINTS.map(p => p.name);
+    collectionForCov = covPaints.map(p => p.name);
   } else if (poolModeCov === 'owned-wish') {
-    collectionForCov = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])];
+    collectionForCov = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])].filter(n => covPaints.some(p => p.name === n));
   } else {
-    collectionForCov = [...COLLECTION_NAMES];
+    collectionForCov = [...COLLECTION_NAMES].filter(n => covPaints.some(p => p.name === n));
   }
   const workerCode = [
-    'const PAINTS = ' + JSON.stringify(ALL_PAINTS.map(p => ({ name: p.name, hex: p.hex, brand: p.brand, type: p.type }))) + ';',
+    'const PAINTS = ' + JSON.stringify(covPaints.map(p => ({ name: p.name, hex: p.hex, brand: p.brand, type: p.type }))) + ';',
     'const GAMUT = ' + JSON.stringify(PRECOMPUTED_GAMUT) + ';',
     'const THRESHOLD = ' + COV_THRESHOLD + ';',
     'const COLLECTION = ' + JSON.stringify(collectionForCov) + ';',
