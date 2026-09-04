@@ -917,6 +917,24 @@ function renderBrowse() {
 }
 
 // 3-state cycle: unowned → wishlist → owned → unowned
+let _renderTimer = null;
+function deferredRender() {
+  if (_renderTimer) clearTimeout(_renderTimer);
+  _renderTimer = setTimeout(() => {
+    _renderTimer = null;
+    renderBrowse();
+    renderCollection();
+  }, 1200);
+}
+function updateCardVisual(name) {
+  const owned = COLLECTION_NAMES.has(name);
+  const wished = WISHLIST_NAMES.has(name);
+  document.querySelectorAll('.paint-card[data-paint="' + esc(name) + '"]').forEach(card => {
+    card.classList.remove('owned', 'wishlist');
+    if (owned) card.classList.add('owned');
+    else if (wished) card.classList.add('wishlist');
+  });
+}
 function cyclePaintState(name) {
   if (COLLECTION_NAMES.has(name)) {
     // owned → unowned
@@ -932,8 +950,9 @@ function cyclePaintState(name) {
   saveCollection(COLLECTION_NAMES);
   saveWishlist(WISHLIST_NAMES);
   clearCache();
-  renderBrowse();
-  renderCollection();
+  // Update card visual immediately, defer list re-sort so you can tap again
+  updateCardVisual(name);
+  deferredRender();
 }
 
 // ================= GAPS TAB (greedy sequential) =================
