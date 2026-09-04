@@ -977,10 +977,12 @@ function runGaps() {
   const analysisPaints = ALL_PAINTS.filter(p => p.type !== 'Metallic');
   const poolMode = document.getElementById('gaps-pool') ? document.getElementById('gaps-pool').value : 'owned';
   let collectionForAnalysis;
+  let ownedOnlyForAnalysis = null;
   if (poolMode === 'all') {
     collectionForAnalysis = analysisPaints.map(p => p.name);
   } else if (poolMode === 'owned-wish') {
     collectionForAnalysis = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])].filter(n => analysisPaints.some(p => p.name === n));
+    ownedOnlyForAnalysis = [...COLLECTION_NAMES].filter(n => analysisPaints.some(p => p.name === n));
   } else {
     collectionForAnalysis = [...COLLECTION_NAMES].filter(n => analysisPaints.some(p => p.name === n));
   }
@@ -990,6 +992,8 @@ function runGaps() {
     'const COLLECTION = ' + JSON.stringify(collectionForAnalysis) + ';',
     'const DEPTH = ' + depth + ';',
     'const MIX_DEPTH = ' + mixDepth + ';',
+    'const OWNED_ONLY = ' + JSON.stringify(ownedOnlyForAnalysis || []) + ';',
+    'const SHOW_WISH_IMPACT = ' + (ownedOnlyForAnalysis ? 'true' : 'false') + ';',
 
     `function hexToRgb(hex){const h=hex.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
     function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
@@ -1109,7 +1113,34 @@ function runGaps() {
     const baseAvgDE = currentTotal / results.length;
     const baseTotal = currentTotal;
     const worst = results.slice(0, 8);
-    self.postMessage({ type: 'baseline', worst, baseAvgDE, totalPaints: PAINTS.length });`,
+
+    // Wishlist impact analysis
+    let wishStats = null;
+    if (SHOW_WISH_IMPACT && OWNED_ONLY.length > 0) {
+      const ownedSet = new Set(OWNED_ONLY);
+      const ownedMine = allPaints.filter(p => ownedSet.has(p.name));
+      let ownedTotal = 0;
+      const ownedWorst = [];
+      for (let i = 0; i < PAINTS.length; i++) {
+        const target = PAINTS[i];
+        const tLab = rgbToLab(hexToRgb(target.hex));
+        let best = findMix(ownedMine, tLab, MIX_DEPTH, 5);
+        best = valueAdjust(best, ownedMine, tLab);
+        ownedTotal += best.dE;
+        ownedWorst.push({ name: target.name, hex: target.hex, dE: best.dE });
+      }
+      ownedWorst.sort((a,b) => b.dE - a.dE);
+      const ownedAvg = ownedTotal / PAINTS.length;
+      const wishCount = mine.length - ownedMine.length;
+      const improvement = ownedAvg - baseAvgDE;
+      const improvementPct = (improvement / ownedAvg * 100);
+      const ownedWorstTop = ownedWorst.slice(0, 8).map(w => {
+        const newResult = results.find(r => r.target === w.name);
+        return { name: w.name, hex: w.hex, oldDE: w.dE, newDE: newResult ? newResult.dE : null };
+      }).filter(w => w.newDE !== null && w.oldDE - w.newDE > 1).slice(0, 5);
+      wishStats = { ownedAvg, ownedTotal, baseAvgDE, improvement, improvementPct, wishCount, ownedCount: ownedMine.length, ownedWorstTop };
+    }
+    self.postMessage({ type: 'baseline', worst, baseAvgDE, totalPaints: PAINTS.length, wishStats });`,
 
     `// Phase 2: Greedy sequential selection
     const picks = [];
@@ -1192,6 +1223,15 @@ function runGaps() {
 
     if (msg.type === 'baseline') {
       baselineHTML = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + msg.totalPaints + ': ' + msg.baseAvgDE.toFixed(2) + ')</span></div>';
+      if (msg.wishStats) {
+        const ws = msg.wishStats;
+        baselineHTML += '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
+          '<b>Wishlist impact:</b> ' + ws.ownedCount + ' owned → ' + (ws.ownedCount + ws.wishCount) + ' with wishlist (' + ws.wishCount + ' wishlisted) ' +
+          '· avg ΔE: <b>' + ws.ownedAvg.toFixed(2) + '</b> → <b>' + ws.baseAvgDE.toFixed(2) + '</b> ' +
+          '(<span style="color:var(--good)">-' + ws.improvement.toFixed(2) + '</span>, ' + ws.improvementPct.toFixed(1) + '% improvement)' +
+          (ws.ownedWorstTop.length > 0 ? '<br><span style="color:var(--dim)">Colors most helped by wishlist:</span> ' + ws.ownedWorstTop.map(w => esc(w.name) + ' (ΔE ' + w.oldDE.toFixed(1) + '→' + w.newDE.toFixed(1) + ')').join(', ') : '') +
+          '</div>';
+      }
       baselineHTML += msg.worst.map(r => {
         const mixStr = r.mix && r.mix.length ? r.mix.map(p => p.name + ' ' + p.ratio + '%' + (p.valueAdjust ? ' (val)' : '')).join(' + ') : 'no mix found';
         return '<div class="gap-item"><span class="swatch" style="background:' + r.targetHex + '"></span><div class="gap-meta"><div class="gap-name">' + esc(r.target) + ' <span class="dE-bad">ΔE ' + r.dE.toFixed(1) + '</span></div><div class="gap-rec">Best with collection: ' + esc(mixStr) + '</div></div></div>';
@@ -1254,10 +1294,12 @@ function runCoverage() {
   const covPaints = ALL_PAINTS.filter(p => p.type !== 'Metallic');
   const poolModeCov = document.getElementById('cov-pool') ? document.getElementById('cov-pool').value : 'owned';
   let collectionForCov;
+  let ownedOnlyForCov = null;
   if (poolModeCov === 'all') {
     collectionForCov = covPaints.map(p => p.name);
   } else if (poolModeCov === 'owned-wish') {
     collectionForCov = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])].filter(n => covPaints.some(p => p.name === n));
+    ownedOnlyForCov = [...COLLECTION_NAMES].filter(n => covPaints.some(p => p.name === n));
   } else {
     collectionForCov = [...COLLECTION_NAMES].filter(n => covPaints.some(p => p.name === n));
   }
@@ -1266,6 +1308,8 @@ function runCoverage() {
     'const GAMUT = ' + JSON.stringify(PRECOMPUTED_GAMUT) + ';',
     'const THRESHOLD = ' + COV_THRESHOLD + ';',
     'const COLLECTION = ' + JSON.stringify(collectionForCov) + ';',
+    'const OWNED_ONLY = ' + JSON.stringify(ownedOnlyForCov || []) + ';',
+    'const SHOW_WISH_IMPACT = ' + (ownedOnlyForCov ? 'true' : 'false') + ';',
 
     `function hexToRgb(hex){const h=hex.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
     function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
@@ -1292,6 +1336,22 @@ function runCoverage() {
 
     `// Phase 1: Gamut is precomputed - send immediately
     self.postMessage({ type: 'gamut', gamut: GAMUT, totalGrid: 2400 });
+
+    // Phase 1b: If owned+wish, compute owned-only coverage first for impact stats
+    let wishImpact = null;
+    if (SHOW_WISH_IMPACT && OWNED_ONLY.length > 0) {
+      const ownedSet = new Set(OWNED_ONLY);
+      const ownedPaints = allPaints.filter(p => ownedSet.has(p.name));
+      let ownedCovered = 0;
+      for (let i = 0; i < GAMUT.length; i++) {
+        const gp = GAMUT[i];
+        const best = findMixHue(ownedPaints, gp.lab, gp.h);
+        if (best.dE < THRESHOLD) ownedCovered++;
+      }
+      const wishCount = collPaints.length - ownedPaints.length;
+      wishImpact = { ownedCovered, ownedTotal: GAMUT.length, ownedPct: ownedCovered / GAMUT.length * 100, wishCount, ownedCount: ownedPaints.length };
+      self.postMessage({ type: 'wish-impact', wishImpact });
+    }
 
     // Phase 2: Collection coverage (chunked)
     let covered = 0;
@@ -1347,25 +1407,52 @@ function runCoverage() {
     if (msg.type === 'gamut') {
       const pct = (msg.gamut.length / msg.totalGrid * 100).toFixed(1);
       summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.gamut.length + '</b> colors (' + pct + '% of HSV space) — precomputed</div>';
-      note.textContent = 'Phase 2: Measuring your collection…';
-      progressFill.style.width = '5%';
+      note.textContent = 'Phase 1b: Measuring owned-only baseline…';
+      progressFill.style.width = '3%';
+    }
+
+    if (msg.type === 'wish-impact') {
+      const wi = msg.wishImpact;
+      const deltaPct = (pctVal => { return wi.ownedPct; })();
+      // Store for later display when coverage-done arrives
+      window._covWishImpact = wi;
     }
 
     if (msg.type === 'coverage-progress') {
       const pct = (msg.covered / msg.total * 100).toFixed(1);
       progressFill.style.width = (5 + msg.index / msg.total * 45) + '%';
       note.textContent = 'Phase 2: ' + msg.covered + '/' + msg.total + ' (' + pct + '%) — ' + msg.uncovered + ' gaps';
+      let wishHTML = '';
+      if (window._covWishImpact) {
+        const wi = window._covWishImpact;
+        const delta = msg.covered - wi.ownedCovered;
+        wishHTML = '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
+          '<b>Wishlist impact:</b> ' + wi.ownedCount + ' owned → ' + (wi.ownedCount + wi.wishCount) + ' with wishlist (' + wi.wishCount + ' wishlisted) ' +
+          '· coverage: <b>' + wi.ownedPct.toFixed(1) + '%</b> → <b>' + pct + '%</b> ' +
+          '(<span style=\'color:var(--good)\'>+' + delta + ' colors</span>)</div>';
+      }
       summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
-        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncovered + '</div>';
+        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncovered + '</div>' +
+        wishHTML;
       renderHueChart(hueChartEl, msg.covByHue);
     }
 
     if (msg.type === 'coverage-done') {
       const pct = (msg.covered / msg.total * 100).toFixed(1);
+      let wishHTML = '';
+      if (window._covWishImpact) {
+        const wi = window._covWishImpact;
+        const delta = msg.covered - wi.ownedCovered;
+        wishHTML = '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
+          '<b>Wishlist impact:</b> ' + wi.ownedCount + ' owned → ' + (wi.ownedCount + wi.wishCount) + ' with wishlist (' + wi.wishCount + ' wishlisted) ' +
+          '· coverage: <b>' + wi.ownedPct.toFixed(1) + '%</b> → <b>' + pct + '%</b> ' +
+          '(<span style=\'color:var(--good)\'>+' + delta + ' colors, +' + (pct - wi.ownedPct).toFixed(1) + '%</span>)</div>';
+      }
       progressFill.style.width = '50%';
       note.textContent = 'Phase 3: Testing recommended paints…';
       summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
-        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncoveredCount + '</div>';
+        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncoveredCount + '</div>' +
+        wishHTML;
       worstEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Hardest gaps</div>' +
         msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + Math.round(p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
       greedyEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Recommended paints to add</div><div class="note" style="margin-bottom:8px">Live leaderboard — updates after each candidate.</div><div id="cov-greedy-list"></div>';
