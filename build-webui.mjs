@@ -22,11 +22,20 @@ try {
 const paints = [...apPaints, ...paPaints];
 const collection = JSON.parse(readFileSync(join(__dirname, 'my-collection.json'), 'utf8'));
 
+// Load precomputed gamut (achievable color space)
+let gamutData = [];
+try {
+  gamutData = JSON.parse(readFileSync(join(__dirname, 'gamut-data.json'), 'utf8'));
+} catch (e) {
+  console.log('Warning: gamut-data.json not found, coverage tab will have empty gamut');
+}
+
 const template = readFileSync(join(__dirname, 'webui.template.html'), 'utf8');
 
 const html = template
   .replace('/*__PAINTS__*/', JSON.stringify(paints))
-  .replace('/*__COLLECTION__*/', JSON.stringify(collection));
+  .replace('/*__COLLECTION__*/', JSON.stringify(collection))
+  .replace('/*__GAMUT__*/', JSON.stringify(gamutData));
 
 writeFileSync(join(__dirname, 'paint-mixer.html'), html);
-console.log(`Generated paint-mixer.html (${(html.length / 1024).toFixed(0)} KB) — ${paints.length} paints (${apPaints.length} Army Painter, ${paPaints.length} Pro Acryl)`);
+console.log(`Generated paint-mixer.html (${(html.length / 1024).toFixed(0)} KB) — ${paints.length} paints (${apPaints.length} Army Painter, ${paPaints.length} Pro Acryl), ${gamutData.length} gamut points`);
