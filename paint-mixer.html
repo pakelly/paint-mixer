@@ -527,7 +527,24 @@ function findMix(paints, targetLab, maxPaints, grid) {
   maxPaints = maxPaints || 3;
   grid = grid || 15;
   const n = paints.length;
-  let best = { dE: Infinity };
+  // Track best at each level — a k-paint solution is always <= (k-1)-paint solution
+  // because a (k-1)-paint solution is a special case (set kth ratio to 0)
+  const bestByLevel = [
+    { dE: Infinity },  // level 1 (single paint)
+    { dE: Infinity },  // level 2
+    { dE: Infinity },  // level 3
+  ];
+
+  // Level 1: single paint
+  for (let i = 0; i < n; i++) {
+    const dE = deltaE2000(paints[i].lab, targetLab);
+    if (dE < bestByLevel[0].dE) {
+      const out = labToRgb(paints[i].lab);
+      bestByLevel[0] = { dE, paints: [{name:paints[i].name,hex:paints[i].hex,ratio:100}], resultHex: rgbToHex(out[0],out[1],out[2]) };
+    }
+  }
+
+  // Level 2: pairs
   const withDist = paints.map(p => ({ ...p, d: deltaE2000(p.lab, targetLab) }));
   withDist.sort((a,b) => a.d - b.d);
   const shortlist = withDist.slice(0, 25);
@@ -545,14 +562,17 @@ function findMix(paints, targetLab, maxPaints, grid) {
         if (w2===0 && i!==j) continue;
         const mixLab = simulateMix([paints[i],paints[j]], [w1,w2]);
         const dE = deltaE2000(mixLab, targetLab);
-        if (dE < best.dE) {
+        if (dE < bestByLevel[1].dE) {
           const out = labToRgb(mixLab);
-          best = { dE, paints: [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(w1*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(w2*100)}], resultHex: rgbToHex(out[0],out[1],out[2]) };
+          bestByLevel[1] = { dE, paints: [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(w1*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(w2*100)}].filter(p=>p.ratio>0), resultHex: rgbToHex(out[0],out[1],out[2]) };
         }
         pushPair({i,j,w1,w2,dE});
       }
     }
   }
+  // Inherit level 1 if no pair beat it
+  if (bestByLevel[1].dE > bestByLevel[0].dE) bestByLevel[1] = bestByLevel[0];
+
   if (maxPaints >= 3) {
     const nameHexIdx = new Map(paints.map((p,idx)=>[p.name+'|'+p.hex, idx]));
     const thirdGrid = [0.15,0.25,0.35,0.45];
@@ -565,15 +585,23 @@ function findMix(paints, targetLab, maxPaints, grid) {
           const a=w1*(1-tw), b=w2*(1-tw), c=tw;
           const mixLab = simulateMix([paints[i],paints[j],paints[ki]], [a,b,c]);
           const dE = deltaE2000(mixLab, targetLab);
-          if (dE < best.dE) {
+          if (dE < bestByLevel[2].dE) {
             const out = labToRgb(mixLab);
             const parts = [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(a*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(b*100)},{name:paints[ki].name,hex:paints[ki].hex,ratio:Math.round(c*100)}].filter(p=>p.ratio>0);
-            best = { dE, paints: parts, resultHex: rgbToHex(out[0],out[1],out[2]) };
+            bestByLevel[2] = { dE, paints: parts, resultHex: rgbToHex(out[0],out[1],out[2]) };
           }
         }
       }
     }
+    // Inherit level 2 if no trio beat it — this is the key fix
+    if (bestByLevel[2].dE > bestByLevel[1].dE) bestByLevel[2] = bestByLevel[1];
   }
+
+  // Return the best overall and per-level results
+  const best = bestByLevel[Math.min(maxPaints, 3) - 1];
+  best.best1 = bestByLevel[0];
+  best.best2 = bestByLevel[1];
+  best.best3 = bestByLevel[2];
   return best;
 }
 
@@ -656,6 +684,7 @@ function hsvOf(rgb) {
 
 function renderMixResults(targetHex) {
   const poolMode = document.getElementById('paint-pool') ? document.getElementById('paint-pool').value : 'owned';
+  // mixDepth controls which results to show: '2' = 2-paint only, '3' = 3-paint only, 'both' = all
   const mixDepth = document.getElementById('mix-depth').value;
   const paints = getPaints(poolMode);
   const targetRgb = hexToRgb(targetHex);
@@ -663,11 +692,14 @@ function renderMixResults(targetHex) {
   const t0 = performance.now();
 
   let best2 = null, best3 = null;
-  if (mixDepth === '2' || mixDepth === 'both') best2 = findMix(paints, targetLab, 2, 15);
-  if (mixDepth === '3' || mixDepth === 'both') best3 = findMix(paints, targetLab, 3, 7);
+  // Single search with maxPaints=3 gives us best1, best2, best3 in one pass
+  // Each level inherits from the previous if no improvement found
+  const combined = findMix(paints, targetLab, 3, 15);
+  best2 = combined.best2;
+  best3 = combined.best3;
   // Auto value-adjust: try adding black/white to improve lightness match
   if (best2) best2 = valueAdjust(best2, paints, targetLab);
-  if (best3) best3 = valueAdjust(best3, paints, targetLab);
+  if (best3 && best3 !== best2) best3 = valueAdjust(best3, paints, targetLab);
   const ms = Math.round(performance.now() - t0);
 
   document.getElementById('mix-hint').textContent = paints.length + ' paints searched in ' + ms + 'ms — weighted geometric mean in linear RGB, evaluated with CIEDE2000.';
@@ -686,19 +718,19 @@ function renderMixResults(targetHex) {
     blocks += '<div class="result"><span class="swatch" style="background:' + closest.paint.hex + '"></span><div class="result-info"><div class="result-title">Closest single bottle</div><div class="result-detail">' + esc(closest.paint.name) + ' · <b>' + closest.paint.hex + '</b> · ΔE <span class="' + dEClass(closest.dE) + '">' + closest.dE.toFixed(1) + '</span> (' + dELabel(closest.dE) + ')</div></div></div>';
   }
 
-  if (best2 && best2.paints) {
+  if (mixDepth !== '3' && best2 && best2.paints) {
     blocks += '<div class="result"><span class="swatch" style="background:' + best2.resultHex + '"></span><div class="result-info"><div class="result-title">Best 2-paint mix</div><div class="result-detail">Predicted <b>' + best2.resultHex + '</b> · ΔE <span class="' + dEClass(best2.dE) + '">' + best2.dE.toFixed(1) + '</span> (' + dELabel(best2.dE) + ')</div></div><div class="swatch-row">' + best2.paints.map(mixPartHTML).join('') + '</div></div>';
   }
 
-  if (best3 && best3.paints && best3.paints.length > 2) {
+  if (mixDepth !== '2' && best3 && best3.paints && best3.paints.length > 2) {
     blocks += '<div class="result"><span class="swatch" style="background:' + best3.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + best3.resultHex + '</b> · ΔE <span class="' + dEClass(best3.dE) + '">' + best3.dE.toFixed(1) + '</span> (' + dELabel(best3.dE) + ')</div></div><div class="swatch-row">' + best3.paints.map(mixPartHTML).join('') + '</div></div>';
-  } else if (mixDepth === '3' && (!best3 || !best3.paints || best3.paints.length <= 2)) {
-    // 3-paint search didn't find anything better than 2-paint
+  } else if (mixDepth !== '2' && best3 && best2 && best3.dE <= best2.dE && best3.paints.length <= 2) {
+    // 3-paint search found that 2-paint (or 1-paint) was already optimal
+    blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint mix</div><div class="result-detail">' + (best3.paints.length === 1 ? '1-paint' : '2-paint') + ' mix was already optimal (ΔE ' + best3.dE.toFixed(1) + ') — no improvement from a third paint</div></div></div>';
+  } else if (mixDepth !== '2' && (!best3 || !best3.paints || best3.paints.length <= 2)) {
     if (best2 && best2.paints) {
-      blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
+      blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint mix</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
     }
-  } else if (mixDepth === 'both' && best2 && best2.dE <= (best3 ? best3.dE : Infinity)) {
-    blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
   }
 
   results.innerHTML = blocks;
