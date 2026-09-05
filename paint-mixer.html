@@ -1653,10 +1653,23 @@ function clearCustomMix() {
 function onCmSliderChange(idx, isModifier) {
   // idx = index into cmSelected, or -1 for modifier
   const all = [];
-  cmSelected.forEach((s, i) => all.push({ ref: s, idx: i, isMod: false }));
-  if (cmModifier) all.push({ ref: cmModifier, idx: -1, isMod: true });
-  if (all.length < 2) return;
+  cmSelected.forEach((s, i) => all.push({ ref: s, idx: i, isMod: false, sliderId: 'cm-slider-' + i }));
+  if (cmModifier) all.push({ ref: cmModifier, idx: -1, isMod: true, sliderId: 'cm-slider-mod' });
+  if (all.length === 0) return;
 
+  // Read the actual slider value from DOM and sync to state
+  all.forEach(a => {
+    const el = document.getElementById(a.sliderId);
+    if (el) a.ref.ratio = parseFloat(el.value);
+  });
+
+  if (all.length < 2) {
+    // Single paint — no normalization needed, just re-render result
+    renderCustomMix();
+    return;
+  }
+
+  // Find the changed one
   let changed;
   if (isModifier) changed = all.find(a => a.isMod);
   else changed = all.find(a => a.idx === idx);
@@ -1687,7 +1700,7 @@ function renderCustomMix() {
       html += `<div class="cm-slot selected">
         <span class="swatch-sm" style="background:${s.hex}"></span>
         <span class="pname">${esc(s.name)}</span>
-        <input type="range" min="0" max="100" value="${Math.round(s.ratio)}" oninput="onCmSliderChange(${i},false); this.nextElementSibling.textContent=Math.round(this.value)+'%'">
+        <input type="range" id="cm-slider-${i}" min="0" max="100" value="${Math.round(s.ratio)}" oninput="onCmSliderChange(${i},false)">
         <span class="pct">${Math.round(s.ratio)}%</span>
         <button class="remove-btn" onclick="removeCustomPaint(${i})" title="Remove">×</button>
       </div>`;
@@ -1701,7 +1714,7 @@ function renderCustomMix() {
     html += `<div class="cm-slot selected" style="border-color:var(--yellow)">
       <span class="swatch-sm" style="background:${m.hex}"></span>
       <span class="pname">${esc(m.name)}</span>
-      <input type="range" min="0" max="100" value="${Math.round(m.ratio)}" oninput="onCmSliderChange(-1,true); this.nextElementSibling.textContent=Math.round(this.value)+'%'">
+      <input type="range" id="cm-slider-mod" min="0" max="100" value="${Math.round(m.ratio)}" oninput="onCmSliderChange(-1,true)">
       <span class="pct">${Math.round(m.ratio)}%</span>
     </div>`;
   }
@@ -1710,9 +1723,9 @@ function renderCustomMix() {
   // Compute result
   const allPaints = [...cmSelected];
   if (cmModifier) allPaints.push(cmModifier);
-  if (allPaints.length < 2) {
+  if (allPaints.length < 1) {
     resultEl.style.display = 'none';
-    hintEl.textContent = cmSelected.length === 0 ? 'Click paints from the grid to build a mix.' : 'Add at least 2 paints to see a predicted mix.';
+    hintEl.textContent = 'Click paints from the grid to build a mix.';
     hintEl.style.display = '';
     return;
   }
