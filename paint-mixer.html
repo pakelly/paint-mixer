@@ -466,6 +466,10 @@
           <input type="range" id="coverage-wheel-value" min="0" max="100" value="50" style="flex:1;accent-color:var(--accent)">
           <span id="coverage-wheel-value-label" style="font-size:0.8rem;min-width:40px;text-align:right">50%</span>
         </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="coverage-wheel-overlay" checked style="accent-color:var(--accent)">
+          <label for="coverage-wheel-overlay" style="font-size:0.8rem;color:var(--dim);cursor:pointer">Show ΔE zone outlines</label>
+        </div>
         <div id="coverage-wheel-legend" style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;font-size:0.75rem;color:var(--dim)"></div>
         <div id="coverage-wheel-toast" style="display:none;position:relative;background:var(--good);color:#0b1a24;padding:6px 14px;border-radius:8px;font-size:0.8rem;font-weight:600">✓ Sent to Mix toward color</div>
       </div>
@@ -1655,6 +1659,7 @@ let _wheelDEGrid = null; // [{h,s,v,dE}]
 let _wheelCanvas = null;
 let _wheelCtx = null;
 let _wheelValue = 50;
+let _wheelShowOverlay = true;
 
 function initCoverageWheel(dEGrid) {
   _wheelDEGrid = dEGrid;
@@ -1671,6 +1676,15 @@ function initCoverageWheel(dEGrid) {
     label.textContent = _wheelValue + '%';
     renderCoverageWheel();
   };
+
+  // Overlay toggle
+  const overlayCheckbox = document.getElementById('coverage-wheel-overlay');
+  if (overlayCheckbox) {
+    overlayCheckbox.onchange = function() {
+      _wheelShowOverlay = this.checked;
+      renderCoverageWheel();
+    };
+  }
 
   // Legend
   const legend = document.getElementById('coverage-wheel-legend');
@@ -1788,6 +1802,7 @@ function renderCoverageWheel() {
     gridMap[pt.h + '_' + pt.s + '_' + pt.v] = pt.dE;
   }
 
+  // Phase 1: Render pure HSV color wheel (no overlay)
   for (let py = 0; py < h; py++) {
     for (let px = 0; px < w; px++) {
       const dx = px - cx;
@@ -1800,114 +1815,95 @@ function renderCoverageWheel() {
         continue;
       }
 
-      // angle: 0° at top, going clockwise
       let angle = Math.atan2(dx, -dy) * 180 / Math.PI;
       if (angle < 0) angle += 360;
       const hue = angle;
       const sat = dist / maxRadius * 100;
       const val = _wheelValue;
 
-      // Base layer: actual HSV color, but with a minimum brightness floor for visibility
-      // The ΔE data comes from the real value slice, but the displayed color uses max(val, 35%) so hues are always visible
+      // Use a minimum brightness floor so colors are always visible
       const displayVal = Math.max(val, 45);
       const [brF, bgF, bbF] = hsvToRgb(hue, sat / 100, displayVal / 100);
-      // hsvToRgb returns 0-1 range; convert to 0-255
-      const br = brF * 255, bg = bgF * 255, bb = bbF * 255;
-
-      // Find nearest grid point for ΔE
-      const nearestH = Math.round(hue / 15) * 15 % 360;
-      const nearestS = Math.max(10, Math.min(100, Math.round(sat / 10) * 10));
-      const nearestV = Math.max(10, Math.min(100, Math.round(val / 10) * 10));
-      const key = nearestH + '_' + nearestS + '_' + nearestV;
-
-      if (key in gridMap) {
-        const dE = gridMap[key];
-        // Overlay zone tint with alpha — so the underlying color wheel shows through
-        const [zr, zg, zb] = dEToZoneTint(dE);
-        const alpha = 0.45; // 45% opacity overlay
-        data[idx]   = Math.round(br * (1 - alpha) + zr * alpha);
-        data[idx+1] = Math.round(bg * (1 - alpha) + zg * alpha);
-        data[idx+2] = Math.round(bb * (1 - alpha) + zb * alpha);
-        data[idx+3] = 255;
-      } else {
-        // Outside gamut — show the color dimmed but still visible
-        data[idx]   = Math.round(br * 0.4);
-        data[idx+1] = Math.round(bg * 0.4);
-        data[idx+2] = Math.round(bb * 0.4);
-        data[idx+3] = 255;
-      }
+      data[idx]   = Math.round(brF * 255);
+      data[idx+1] = Math.round(bgF * 255);
+      data[idx+2] = Math.round(bbF * 255);
+      data[idx+3] = 255;
     }
   }
 
   _wheelCtx.putImageData(imageData, 0, 0);
 
-  // Draw zone boundary outlines on top
-  _wheelCtx.save();
-  _wheelCtx.globalAlpha = 0.6;
-  // Outline the reachable zone (ΔE < 3) in green
-  drawZoneOutline(_wheelCtx, cx, cy, maxRadius, gridMap, 3, '#4caf50');
-  // Outline the almost-reachable zone (ΔE < 10) in yellow
-  drawZoneOutline(_wheelCtx, cx, cy, maxRadius, gridMap, 10, '#ffc107');
-  _wheelCtx.restore();
+  // Phase 2: Draw toggleable ΔE overlay (outlines only, not fill)
+  if (_wheelShowOverlay) {
+    _wheelCtx.save();
+    drawZoneOutlines(_wheelCtx, cx, cy, maxRadius, gridMap);
+    _wheelCtx.restore();
+  }
 }
 
-function dEToZoneTint(dE) {
-  // Returns RGB for zone overlay tint
-  if (dE < 3)   return [76, 175, 80];   // green
-  if (dE < 10)  return [255, 193, 7];   // yellow
-  return [239, 83, 80];                  // red
-}
+function drawZoneOutlines(ctx, cx, cy, maxRadius, gridMap) {
+  const nearestV = Math.max(10, Math.min(100, Math.round(_wheelValue / 10) * 10));
+  const hSteps = 24, sSteps = 10;
 
-function drawZoneOutline(ctx, cx, cy, maxRadius, gridMap, threshold, color) {
-  // Walk the grid and draw contour lines where ΔE crosses the threshold
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  const hSteps = 24, sSteps = 10, vSteps = 10;
-  const v = _wheelValue;
-  const nearestV = Math.max(10, Math.min(100, Math.round(v / 10) * 10));
+  // Draw colored outlines at zone boundaries
+  // Green outline at ΔE=3 boundary, yellow outline at ΔE=10 boundary
+  const thresholds = [
+    { t: 3,  color: '#4caf50', label: 'reachable' },
+    { t: 10, color: '#ffc107', label: 'almost' }
+  ];
 
-  for (let hi = 0; hi < hSteps; hi++) {
-    for (let si = 0; si < sSteps; si++) {
-      const h = (hi * 15) % 360;
-      const s = (si + 1) * 10;
-      const key = h + '_' + s + '_' + nearestV;
-      if (!(key in gridMap)) continue;
-      const dE = gridMap[key];
+  for (const { t, color } of thresholds) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
 
-      // Check neighbor in hue direction
-      const h2 = ((hi + 1) * 15) % 360;
-      const key2 = h2 + '_' + s + '_' + nearestV;
-      if (key2 in gridMap) {
-        const dE2 = gridMap[key2];
-        if ((dE < threshold) !== (dE2 < threshold)) {
- // Draw a small line segment at the boundary
-          const a1 = h * Math.PI / 180;
-          const a2 = h2 * Math.PI / 180;
-          const r = s / 100 * maxRadius;
-          const am = (a1 + a2) / 2;
-          ctx.moveTo(cx + Math.sin(am) * r, cy - Math.cos(am) * r);
-          ctx.lineTo(cx + Math.sin(am) * (r + 3), cy - Math.cos(am) * (r + 3));
+    for (let hi = 0; hi < hSteps; hi++) {
+      for (let si = 0; si < sSteps; si++) {
+        const h = (hi * 15) % 360;
+        const s = (si + 1) * 10;
+        const key = h + '_' + s + '_' + nearestV;
+        if (!(key in gridMap)) continue;
+        const dE = gridMap[key];
+
+        // Check hue neighbor
+        const h2 = ((hi + 1) * 15) % 360;
+        const key2 = h2 + '_' + s + '_' + nearestV;
+        if (key2 in gridMap) {
+          const dE2 = gridMap[key2];
+          if ((dE < t) !== (dE2 < t)) {
+            const a1 = h * Math.PI / 180;
+            const a2 = h2 * Math.PI / 180;
+            const am = (a1 + a2) / 2;
+            const r = s / 100 * maxRadius;
+            ctx.moveTo(cx + Math.sin(am) * r - 3, cy - Math.cos(am) * r - 3);
+            ctx.lineTo(cx + Math.sin(am) * r + 3, cy - Math.cos(am) * r + 3);
+          }
         }
-      }
 
-      // Check neighbor in saturation direction
-      const s2 = si > 0 ? si * 10 : 0;
-      const key3 = h + '_' + s2 + '_' + nearestV;
-      if (key3 in gridMap && s2 !== s) {
-        const dE3 = gridMap[key3];
-        if ((dE < threshold) !== (dE3 < threshold)) {
-          const a = h * Math.PI / 180 + 7.5 * Math.PI / 180; // mid-angle
-          const r1 = s / 100 * maxRadius;
-          const r2 = s2 / 100 * maxRadius;
-          const rm = (r1 + r2) / 2;
-          ctx.moveTo(cx + Math.sin(a) * rm - 2, cy - Math.cos(a) * rm);
-          ctx.lineTo(cx + Math.sin(a) * rm + 2, cy - Math.cos(a) * rm);
+        // Check saturation neighbor
+        const s2 = si * 10;
+        if (s2 !== s) {
+          const key3 = h + '_' + s2 + '_' + nearestV;
+          if (key3 in gridMap) {
+            const dE3 = gridMap[key3];
+            if ((dE < t) !== (dE3 < t)) {
+              const a = (h + 7.5) * Math.PI / 180;
+              const r1 = s / 100 * maxRadius;
+              const r2 = s2 / 100 * maxRadius;
+              const rm = (r1 + r2) / 2;
+              ctx.moveTo(cx + Math.sin(a) * rm - 3, cy - Math.cos(a) * rm);
+              ctx.lineTo(cx + Math.sin(a) * rm + 3, cy - Math.cos(a) * rm);
+            }
+          }
         }
       }
     }
+    ctx.stroke();
   }
-  ctx.stroke();
+
+  // Also draw a subtle fill tint if overlay mode is "both"
+  ctx.globalAlpha = 1;
 }
 
 // ================= TABS =================
