@@ -725,10 +725,24 @@ function renderMixResults(targetHex) {
     blocks += '<div class="result"><span class="swatch" style="background:' + best3.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + best3.resultHex + '</b> · ΔE <span class="' + dEClass(best3.dE) + '">' + best3.dE.toFixed(1) + '</span> (' + dELabel(best3.dE) + ')</div></div><div class="swatch-row">' + best3.paints.map(mixPartHTML).join('') + '</div></div>';
   } else if (mixDepth !== '2' && best3 && best2 && best3.dE <= best2.dE && best3.paints.length <= 2) {
     // 3-paint search found that 2-paint (or 1-paint) was already optimal
-    blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint mix</div><div class="result-detail">' + (best3.paints.length === 1 ? '1-paint' : '2-paint') + ' mix was already optimal (ΔE ' + best3.dE.toFixed(1) + ') — no improvement from a third paint</div></div></div>';
+    // Show the full mix details, not just a text message
+    const isInherited = best3 === best2;
+    const srcMix = isInherited ? best2 : best3;
+    const levelLabel = srcMix.paints.length === 1 ? '1-paint' : '2-paint';
+    if (mixDepth === '3') {
+      // In 3-paint-only mode, show the full mix with a note
+      blocks += '<div class="result"><span class="swatch" style="background:' + srcMix.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + srcMix.resultHex + '</b> · ΔE <span class="' + dEClass(srcMix.dE) + '">' + srcMix.dE.toFixed(1) + '</span> (' + dELabel(srcMix.dE) + ')</div></div><div class="swatch-row">' + srcMix.paints.map(mixPartHTML).join('') + '</div><div class="mode-note" style="padding:4px 0">' + levelLabel + ' mix was already optimal — no improvement from a third paint</div></div>';
+    } else {
+      blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint mix</div><div class="result-detail">' + levelLabel + ' mix was already optimal (ΔE ' + srcMix.dE.toFixed(1) + ') — no improvement from a third paint</div></div></div>';
+    }
   } else if (mixDepth !== '2' && (!best3 || !best3.paints || best3.paints.length <= 2)) {
     if (best2 && best2.paints) {
-      blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint mix</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
+      if (mixDepth === '3') {
+        // In 3-paint-only mode, show the full 2-paint mix
+        blocks += '<div class="result"><span class="swatch" style="background:' + best2.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + best2.resultHex + '</b> · ΔE <span class="' + dEClass(best2.dE) + '">' + best2.dE.toFixed(1) + '</span> (' + dELabel(best2.dE) + ')</div></div><div class="swatch-row">' + best2.paints.map(mixPartHTML).join('') + '</div><div class="mode-note" style="padding:4px 0">2-paint mix was already optimal — no improvement from a third paint</div></div>';
+      } else {
+        blocks += '<div class="result"><div class="result-info"><div class="result-title">3-paint mix</div><div class="result-detail">2-paint mix was already sufficient (ΔE ' + best2.dE.toFixed(1) + ')</div></div></div>';
+      }
     }
   }
 
