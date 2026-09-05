@@ -1751,10 +1751,6 @@ function renderCoverageWheel() {
   const data = imageData.data;
 
   // Build a lookup map for quick ΔE access
-  // Key: "h_s_v" → dE (find nearest grid point)
-  // Grid hues: 0,15,30,...,345 (24 steps of 15°)
-  // Grid sats: 10,20,...,100 (10 steps)
-  // Grid vals: 10,20,...,100 (10 steps)
   const gridMap = {};
   for (const pt of _wheelDEGrid) {
     gridMap[pt.h + '_' + pt.s + '_' + pt.v] = pt.dE;
@@ -1768,11 +1764,7 @@ function renderCoverageWheel() {
       const idx = (py * w + px) * 4;
 
       if (dist > maxRadius) {
-        // Outside wheel — transparent
-        data[idx] = 0;
-        data[idx+1] = 0;
-        data[idx+2] = 0;
-        data[idx+3] = 0;
+        data[idx] = 0; data[idx+1] = 0; data[idx+2] = 0; data[idx+3] = 0;
         continue;
       }
 
@@ -1783,7 +1775,10 @@ function renderCoverageWheel() {
       const sat = dist / maxRadius * 100;
       const val = _wheelValue;
 
-      // Find nearest grid point
+      // Base layer: actual HSV color at this point
+      const [br, bg, bb] = hsvToRgb(hue, sat / 100, val / 100);
+
+      // Find nearest grid point for ΔE
       const nearestH = Math.round(hue / 15) * 15 % 360;
       const nearestS = Math.max(10, Math.min(100, Math.round(sat / 10) * 10));
       const nearestV = Math.max(10, Math.min(100, Math.round(val / 10) * 10));
@@ -1791,22 +1786,92 @@ function renderCoverageWheel() {
 
       if (key in gridMap) {
         const dE = gridMap[key];
-        const [r, g, b] = dEToColor(dE);
-        data[idx] = r;
-        data[idx+1] = g;
-        data[idx+2] = b;
+        // Overlay zone tint with alpha — so the underlying color wheel shows through
+        const [zr, zg, zb] = dEToZoneTint(dE);
+        const alpha = 0.45; // 45% opacity overlay
+        data[idx]   = Math.round(br * (1 - alpha) + zr * alpha);
+        data[idx+1] = Math.round(bg * (1 - alpha) + zg * alpha);
+        data[idx+2] = Math.round(bb * (1 - alpha) + zb * alpha);
         data[idx+3] = 255;
       } else {
-        // Outside gamut — dark grey
-        data[idx] = 20;
-        data[idx+1] = 20;
-        data[idx+2] = 20;
+        // Outside gamut — show the color dimmed
+        data[idx]   = Math.round(br * 0.3);
+        data[idx+1] = Math.round(bg * 0.3);
+        data[idx+2] = Math.round(bb * 0.3);
         data[idx+3] = 255;
       }
     }
   }
 
   _wheelCtx.putImageData(imageData, 0, 0);
+
+  // Draw zone boundary outlines on top
+  _wheelCtx.save();
+  _wheelCtx.globalAlpha = 0.6;
+  // Outline the reachable zone (ΔE < 3) in green
+  drawZoneOutline(_wheelCtx, cx, cy, maxRadius, gridMap, 3, '#4caf50');
+  // Outline the almost-reachable zone (ΔE < 10) in yellow
+  drawZoneOutline(_wheelCtx, cx, cy, maxRadius, gridMap, 10, '#ffc107');
+  _wheelCtx.restore();
+}
+
+function dEToZoneTint(dE) {
+  // Returns RGB for zone overlay tint
+  if (dE < 3)   return [76, 175, 80];   // green
+  if (dE < 10)  return [255, 193, 7];   // yellow
+  return [239, 83, 80];                  // red
+}
+
+function drawZoneOutline(ctx, cx, cy, maxRadius, gridMap, threshold, color) {
+  // Walk the grid and draw contour lines where ΔE crosses the threshold
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const hSteps = 24, sSteps = 10, vSteps = 10;
+  const v = _wheelValue;
+  const nearestV = Math.max(10, Math.min(100, Math.round(v / 10) * 10));
+
+  for (let hi = 0; hi < hSteps; hi++) {
+    for (let si = 0; si < sSteps; si++) {
+      const h = (hi * 15) % 360;
+      const s = (si + 1) * 10;
+      const key = h + '_' + s + '_' + nearestV;
+      if (!(key in gridMap)) continue;
+      const dE = gridMap[key];
+
+      // Check neighbor in hue direction
+      const h2 = ((hi + 1) * 15) % 360;
+      const key2 = h2 + '_' + s + '_' + nearestV;
+      if (key2 in gridMap) {
+        const dE2 = gridMap[key2];
+        if ((dE < threshold) !== (dE2 < threshold)) {
+ // Draw a small line segment at the boundary
+          const a1 = h * Math.PI / 180;
+          const a2 = h2 * Math.PI / 180;
+          const r = s / 100 * maxRadius;
+          const am = (a1 + a2) / 2;
+          ctx.moveTo(cx + Math.sin(am) * r, cy - Math.cos(am) * r);
+          ctx.lineTo(cx + Math.sin(am) * (r + 3), cy - Math.cos(am) * (r + 3));
+        }
+      }
+
+      // Check neighbor in saturation direction
+      const s2 = si > 0 ? si * 10 : 0;
+      const key3 = h + '_' + s2 + '_' + nearestV;
+      if (key3 in gridMap && s2 !== s) {
+        const dE3 = gridMap[key3];
+        if ((dE < threshold) !== (dE3 < threshold)) {
+          const a = h * Math.PI / 180 + 7.5 * Math.PI / 180; // mid-angle
+          const r1 = s / 100 * maxRadius;
+          const r2 = s2 / 100 * maxRadius;
+          const rm = (r1 + r2) / 2;
+          ctx.moveTo(cx + Math.sin(a) * rm - 2, cy - Math.cos(a) * rm);
+          ctx.lineTo(cx + Math.sin(a) * rm + 2, cy - Math.cos(a) * rm);
+        }
+      }
+    }
+  }
+  ctx.stroke();
 }
 
 // ================= TABS =================
