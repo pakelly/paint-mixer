@@ -1775,8 +1775,10 @@ function renderCoverageWheel() {
       const sat = dist / maxRadius * 100;
       const val = _wheelValue;
 
-      // Base layer: actual HSV color at this point
-      const [br, bg, bb] = hsvToRgb(hue, sat / 100, val / 100);
+      // Base layer: actual HSV color, but with a minimum brightness floor for visibility
+      // The ΔE data comes from the real value slice, but the displayed color uses max(val, 35%) so hues are always visible
+      const displayVal = Math.max(val, 35);
+      const [br, bg, bb] = hsvToRgb(hue, sat / 100, displayVal / 100);
 
       // Find nearest grid point for ΔE
       const nearestH = Math.round(hue / 15) * 15 % 360;
@@ -1794,10 +1796,10 @@ function renderCoverageWheel() {
         data[idx+2] = Math.round(bb * (1 - alpha) + zb * alpha);
         data[idx+3] = 255;
       } else {
-        // Outside gamut — show the color dimmed
-        data[idx]   = Math.round(br * 0.3);
-        data[idx+1] = Math.round(bg * 0.3);
-        data[idx+2] = Math.round(bb * 0.3);
+        // Outside gamut — show the color dimmed but still visible
+        data[idx]   = Math.round(br * 0.4);
+        data[idx+1] = Math.round(bg * 0.4);
+        data[idx+2] = Math.round(bb * 0.4);
         data[idx+3] = 255;
       }
     }
