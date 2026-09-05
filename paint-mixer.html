@@ -468,7 +468,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <input type="checkbox" id="coverage-wheel-overlay" checked style="accent-color:var(--accent)">
-          <label for="coverage-wheel-overlay" style="font-size:0.8rem;color:var(--dim);cursor:pointer">Show ΔE zone outlines</label>
+          <label for="coverage-wheel-overlay" style="font-size:0.8rem;color:var(--dim);cursor:pointer">Show ΔE coverage pips</label>
         </div>
         <div id="coverage-wheel-legend" style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;font-size:0.75rem;color:var(--dim)"></div>
         <div id="coverage-wheel-toast" style="display:none;position:relative;background:var(--good);color:#0b1a24;padding:6px 14px;border-radius:8px;font-size:0.8rem;font-weight:600">✓ Sent to Mix toward color</div>
@@ -1833,77 +1833,43 @@ function renderCoverageWheel() {
 
   _wheelCtx.putImageData(imageData, 0, 0);
 
-  // Phase 2: Draw toggleable ΔE overlay (outlines only, not fill)
+  // Phase 2: Draw toggleable ΔE pips (colored dots at each grid point)
   if (_wheelShowOverlay) {
     _wheelCtx.save();
-    drawZoneOutlines(_wheelCtx, cx, cy, maxRadius, gridMap);
+    drawZonePips(_wheelCtx, cx, cy, maxRadius, gridMap);
     _wheelCtx.restore();
   }
 }
 
-function drawZoneOutlines(ctx, cx, cy, maxRadius, gridMap) {
+function drawZonePips(ctx, cx, cy, maxRadius, gridMap) {
   const nearestV = Math.max(10, Math.min(100, Math.round(_wheelValue / 10) * 10));
-  const hSteps = 24, sSteps = 10;
+  const pipRadius = 3;
 
-  // Draw colored outlines at zone boundaries
-  // Green outline at ΔE=3 boundary, yellow outline at ΔE=10 boundary
-  const thresholds = [
-    { t: 3,  color: '#4caf50', label: 'reachable' },
-    { t: 10, color: '#ffc107', label: 'almost' }
-  ];
+  for (const pt of _wheelDEGrid) {
+    // Only draw points at the current value slice
+    if (pt.v !== nearestV) continue;
 
-  for (const { t, color } of thresholds) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.globalAlpha = 0.8;
+    const hRad = pt.h * Math.PI / 180;
+    const r = pt.s / 100 * maxRadius;
+    const x = cx + Math.sin(hRad) * r;
+    const y = cy - Math.cos(hRad) * r;
+
+    let color;
+    if (pt.dE < 3)       color = '#4caf50'; // green — reachable
+    else if (pt.dE < 10)  color = '#ffc107'; // yellow — almost
+    else                  color = '#ef5350'; // red — unreachable
+
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.85;
     ctx.beginPath();
+    ctx.arc(x, y, pipRadius, 0, 2 * Math.PI);
+    ctx.fill();
 
-    for (let hi = 0; hi < hSteps; hi++) {
-      for (let si = 0; si < sSteps; si++) {
-        const h = (hi * 15) % 360;
-        const s = (si + 1) * 10;
-        const key = h + '_' + s + '_' + nearestV;
-        if (!(key in gridMap)) continue;
-        const dE = gridMap[key];
-
-        // Check hue neighbor
-        const h2 = ((hi + 1) * 15) % 360;
-        const key2 = h2 + '_' + s + '_' + nearestV;
-        if (key2 in gridMap) {
-          const dE2 = gridMap[key2];
-          if ((dE < t) !== (dE2 < t)) {
-            const a1 = h * Math.PI / 180;
-            const a2 = h2 * Math.PI / 180;
-            const am = (a1 + a2) / 2;
-            const r = s / 100 * maxRadius;
-            ctx.moveTo(cx + Math.sin(am) * r - 3, cy - Math.cos(am) * r - 3);
-            ctx.lineTo(cx + Math.sin(am) * r + 3, cy - Math.cos(am) * r + 3);
-          }
-        }
-
-        // Check saturation neighbor
-        const s2 = si * 10;
-        if (s2 !== s) {
-          const key3 = h + '_' + s2 + '_' + nearestV;
-          if (key3 in gridMap) {
-            const dE3 = gridMap[key3];
-            if ((dE < t) !== (dE3 < t)) {
-              const a = (h + 7.5) * Math.PI / 180;
-              const r1 = s / 100 * maxRadius;
-              const r2 = s2 / 100 * maxRadius;
-              const rm = (r1 + r2) / 2;
-              ctx.moveTo(cx + Math.sin(a) * rm - 3, cy - Math.cos(a) * rm);
-              ctx.lineTo(cx + Math.sin(a) * rm + 3, cy - Math.cos(a) * rm);
-            }
-          }
-        }
-      }
-    }
+    // White outline for visibility on bright colors
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 0.5;
     ctx.stroke();
   }
-
-  // Also draw a subtle fill tint if overlay mode is "both"
-  ctx.globalAlpha = 1;
 }
 
 // ================= TABS =================
