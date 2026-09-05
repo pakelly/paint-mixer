@@ -354,6 +354,7 @@
       <h3> Wishlist (<span id="wish-count">0</span> paints)</h3>
       <div class="wish-hint">Paints you're considering adding. Click a swatch to mix-test it. Use the browse tab to add more.</div>
       <div class="wish-controls">
+        <button class="secondary" id="wish-export" onclick="exportWishlist()">Copy to clipboard</button>
         <button class="secondary" id="wish-promote-all" onclick="promoteAllWishlist()">Move all to owned</button>
         <button class="secondary" id="wish-clear" onclick="clearWishlist()">Clear wishlist</button>
       </div>
@@ -966,6 +967,30 @@ function clearWishlist() {
   saveWishlist(WISHLIST_NAMES);
   renderWishlist();
   renderBrowse();
+}
+
+function exportWishlist() {
+  const names = [...WISHLIST_NAMES].sort();
+  if (names.length === 0) return;
+  const text = names.join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('wish-export');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied ' + names.length + ' paints';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  }).catch(() => {
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById('wish-export');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied ' + names.length + ' paints';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  });
 }
 
 function pickPaint(hex) {
