@@ -574,26 +574,48 @@ function findMix(paints, targetLab, maxPaints, grid) {
   if (bestByLevel[1].dE > bestByLevel[0].dE) bestByLevel[1] = bestByLevel[0];
 
   if (maxPaints >= 3) {
-    const nameHexIdx = new Map(paints.map((p,idx)=>[p.name+'|'+p.hex, idx]));
-    const thirdGrid = [0.15,0.25,0.35,0.45];
-    for (const pair of bestPairs) {
-      const { i, j, w1, w2 } = pair;
-      for (const k of shortlist) {
-        const ki = nameHexIdx.get(k.name+'|'+k.hex);
-        if (ki===undefined || ki===i || ki===j) continue;
-        for (const tw of thirdGrid) {
-          const a=w1*(1-tw), b=w2*(1-tw), c=tw;
-          const mixLab = simulateMix([paints[i],paints[j],paints[ki]], [a,b,c]);
-          const dE = deltaE2000(mixLab, targetLab);
-          if (dE < bestByLevel[2].dE) {
-            const out = labToRgb(mixLab);
-            const parts = [{name:paints[i].name,hex:paints[i].hex,ratio:Math.round(a*100)},{name:paints[j].name,hex:paints[j].hex,ratio:Math.round(b*100)},{name:paints[ki].name,hex:paints[ki].hex,ratio:Math.round(c*100)}].filter(p=>p.ratio>0);
-            bestByLevel[2] = { dE, paints: parts, resultHex: rgbToHex(out[0],out[1],out[2]) };
+    // Full trio search over the shortlist (top 25 closest paints)
+    // This catches combinations where no pair is good on its own but the trio is
+    // e.g. Red + Blue + White where Red+Blue alone is too saturated
+    const trioGrid = 5; // coarser grid for trios (5 steps = 21 combos per trio)
+    const sl = shortlist.length;
+    for (let si = 0; si < sl; si++) {
+      for (let sj = si; sj < sl; sj++) {
+        for (let sk = sj; sk < sl; sk++) {
+          // Skip if all three are the same paint
+          if (si === sj && sj === sk) continue;
+          const pa = shortlist[si], pb = shortlist[sj], pc = shortlist[sk];
+          // Search ratios: w1 + w2 + w3 = 1, each >= 0
+          // Use a coarse grid — for trioGrid=5, steps are 0, 0.2, 0.4, 0.6, 0.8, 1.0
+          for (let r1 = 0; r1 <= trioGrid; r1++) {
+            for (let r2 = 0; r2 <= trioGrid - r1; r2++) {
+              const r3 = trioGrid - r1 - r2;
+              if (r3 < 0) continue;
+              const w1 = r1 / trioGrid, w2 = r2 / trioGrid, w3 = r3 / trioGrid;
+              // Skip degenerate cases (already covered by level 1/2)
+              if (w3 === 0 && si === sj) continue; // same as single paint
+              if (w2 === 0 && si === sk) continue;
+              if (w1 === 0 && sj === sk) continue;
+              if (w1 === 0 && w2 === 0) continue; // single paint
+              if (w2 === 0 && w3 === 0) continue;
+              if (w1 === 0 && w3 === 0) continue;
+              const mixLab = simulateMix([pa, pb, pc], [w1, w2, w3]);
+              const dE = deltaE2000(mixLab, targetLab);
+              if (dE < bestByLevel[2].dE) {
+                const out = labToRgb(mixLab);
+                const parts = [
+                  {name:pa.name, hex:pa.hex, ratio:Math.round(w1*100)},
+                  {name:pb.name, hex:pb.hex, ratio:Math.round(w2*100)},
+                  {name:pc.name, hex:pc.hex, ratio:Math.round(w3*100)}
+                ].filter(p => p.ratio > 0);
+                bestByLevel[2] = { dE, paints: parts, resultHex: rgbToHex(out[0],out[1],out[2]) };
+              }
+            }
           }
         }
       }
     }
-    // Inherit level 2 if no trio beat it — this is the key fix
+    // Inherit level 2 if no trio beat it
     if (bestByLevel[2].dE > bestByLevel[1].dE) bestByLevel[2] = bestByLevel[1];
   }
 
