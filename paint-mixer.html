@@ -775,6 +775,61 @@ function mixPartHTML(p) {
   const label = p.valueAdjust ? ' <span class="mode-note">(value adjust)</span>' : '';
   return '<div class="mix-part"><span class="pct">' + p.ratio + '%</span><span class="swatch-sm" style="background:' + p.hex + '"></span><span class="pname">' + esc(p.name) + label + '</span></div>';
 }
+
+function sendMixToCustomMix(paints) {
+  // Reset existing selection
+  cmSelected = [];
+  cmModifier = null;
+  document.getElementById('cm-use-modifier').checked = false;
+  document.getElementById('cm-modifier-field').style.display = 'none';
+
+  // Populate with the mix's paints, preserving ratios
+  for (const p of paints) {
+    if (p.valueAdjust) {
+      // Value adjust paints (black/white) go as modifier if one, or skip if multiple
+      if (p.valueAdjust && !cmModifier) {
+        const paintObj = ALL_PAINTS.find(x => x.name === p.name);
+        if (paintObj) {
+          cmModifier = { name: p.name, hex: p.hex, rgb: hexToRgb(p.hex), ratio: p.ratio };
+          document.getElementById('cm-use-modifier').checked = true;
+          document.getElementById('cm-modifier-field').style.display = '';
+          // Set modifier dropdown to this paint
+          const modSel = document.getElementById('cm-modifier');
+          if (modSel) modSel.value = p.name;
+        }
+      }
+    } else {
+      cmSelected.push({ name: p.name, hex: p.hex, rgb: hexToRgb(p.hex), ratio: p.ratio });
+    }
+  }
+
+  // Normalize ratios to sum to 100
+  const total = cmSelected.reduce((a, s) => a + s.ratio, 0) + (cmModifier ? cmModifier.ratio : 0);
+  if (total > 0) {
+    cmSelected.forEach(s => { s.ratio = Math.round(s.ratio / total * 100); });
+    if (cmModifier) cmModifier.ratio = Math.round(cmModifier.ratio / total * 100);
+    // Fix rounding remainder
+    const cmTotal = cmSelected.reduce((a, s) => a + s.ratio, 0) + (cmModifier ? cmModifier.ratio : 0);
+    if (cmTotal !== 100 && cmSelected.length > 0) {
+      cmSelected[0].ratio += (100 - cmTotal);
+    }
+  }
+
+  // Switch to Custom Mix tab
+  showTab('custom');
+  renderCustomMixGrid();
+  renderCustomMix();
+}
+
+// Store last mix results for safe retrieval (avoids quote-escaping in onclick)
+let _lastMixResults = {};
+function storeMixResult(key, mix) {
+  _lastMixResults[key] = mix;
+}
+function sendStoredMixToCustomMix(key) {
+  const mix = _lastMixResults[key];
+  if (mix) sendMixToCustomMix(mix.paints);
+}
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function hsvOf(rgb) {
   const r=rgb[0], g=rgb[1], b=rgb[2];
@@ -824,11 +879,13 @@ function renderMixResults(targetHex) {
   }
 
   if (mixDepth !== '3' && best2 && best2.paints) {
-    blocks += '<div class="result"><span class="swatch" style="background:' + best2.resultHex + '"></span><div class="result-info"><div class="result-title">Best 2-paint mix</div><div class="result-detail">Predicted <b>' + best2.resultHex + '</b> · ΔE <span class="' + dEClass(best2.dE) + '">' + best2.dE.toFixed(1) + '</span> (' + dELabel(best2.dE) + ')</div></div><div class="swatch-row">' + best2.paints.map(mixPartHTML).join('') + '</div></div>';
+    storeMixResult('best2', best2);
+    blocks += '<div class="result"><span class="swatch" style="background:' + best2.resultHex + '"></span><div class="result-info"><div class="result-title">Best 2-paint mix</div><div class="result-detail">Predicted <b>' + best2.resultHex + '</b> · ΔE <span class="' + dEClass(best2.dE) + '">' + best2.dE.toFixed(1) + '</span> (' + dELabel(best2.dE) + ')</div></div><div class="swatch-row">' + best2.paints.map(mixPartHTML).join('') + '</div><button class="secondary" style="margin-top:6px;font-size:0.78rem" onclick="sendStoredMixToCustomMix(\'best2\')">↗ Send to Custom Mix</button></div>';
   }
 
   if (mixDepth !== '2' && best3 && best3.paints && best3.paints.length > 2) {
-    blocks += '<div class="result"><span class="swatch" style="background:' + best3.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + best3.resultHex + '</b> · ΔE <span class="' + dEClass(best3.dE) + '">' + best3.dE.toFixed(1) + '</span> (' + dELabel(best3.dE) + ')</div></div><div class="swatch-row">' + best3.paints.map(mixPartHTML).join('') + '</div></div>';
+    storeMixResult('best3', best3);
+    blocks += '<div class="result"><span class="swatch" style="background:' + best3.resultHex + '"></span><div class="result-info"><div class="result-title">Best 3-paint mix</div><div class="result-detail">Predicted <b>' + best3.resultHex + '</b> · ΔE <span class="' + dEClass(best3.dE) + '">' + best3.dE.toFixed(1) + '</span> (' + dELabel(best3.dE) + ')</div></div><div class="swatch-row">' + best3.paints.map(mixPartHTML).join('') + '</div><button class="secondary" style="margin-top:6px;font-size:0.78rem" onclick="sendStoredMixToCustomMix(\'best3\')">↗ Send to Custom Mix</button></div>';
   } else if (mixDepth !== '2' && best3 && best2 && best3.dE <= best2.dE && best3.paints.length <= 2) {
     // 3-paint search found that 2-paint (or 1-paint) was already optimal
     // Show the full mix details, not just a text message
