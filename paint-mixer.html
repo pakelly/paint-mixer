@@ -495,7 +495,7 @@ function loadCollection() {
     const stored = localStorage.getItem('paint-mixer-collection');
     if (stored) return new Set(JSON.parse(stored));
   } catch(e) {}
-  return new Set(SEED_COLLECTION);
+  return new Set(); // empty collection for new users
 }
 function saveCollection(set) {
   localStorage.setItem('paint-mixer-collection', JSON.stringify([...set].sort()));
