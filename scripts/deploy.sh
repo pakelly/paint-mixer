@@ -60,6 +60,16 @@ for f in $WEB_FILES; do
 done
 
 echo ""
+echo "=== Step 3b: Stamp deploy time ==="
+DEPLOY_TIME=$(TZ=UTC date '+%Y%m%d.%H%M')
+for f in $WEB_FILES; do
+  if grep -q 'DEPLOY_TIME' "$f" 2>/dev/null; then
+    sed -i "s|const DEPLOY_TIME = .*|const DEPLOY_TIME = '$DEPLOY_TIME';|" "$f"
+    echo "  ✓ Stamped $f with DEPLOY_TIME=$DEPLOY_TIME"
+  fi
+done
+
+echo ""
 echo "=== Step 4: Remove any files on gh-pages that aren't in the deploy list ==="
 DEPLOY_LIST=$(echo "$WEB_FILES" | tr ' ' '\n' | sort)
 for f in $(git ls-files --cached); do
