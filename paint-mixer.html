@@ -972,7 +972,11 @@ function clearWishlist() {
 function exportWishlist() {
   const names = [...WISHLIST_NAMES].sort();
   if (names.length === 0) return;
-  const text = names.join('\n');
+  const lines = names.map(n => {
+    const p = ALL_PAINTS.find(p => p.name === n);
+    return (p ? p.brand : 'Unknown') + ' ' + n;
+  });
+  const text = lines.join('\n');
   navigator.clipboard.writeText(text).then(() => {
     const btn = document.getElementById('wish-export');
     const orig = btn.textContent;
