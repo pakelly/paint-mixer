@@ -17,7 +17,7 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # List only files that should be served on the live site.
 WEB_FILES=""
 if [ -f "paint-mixer.html" ]; then
-  WEB_FILES="paint-mixer.html"
+  WEB_FILES="index.html paint-mixer.html"
 elif [ -f "index.html" ] && [ -f "app.js" ]; then
   WEB_FILES="index.html app.js style.css data.json"
 elif [ -f "index.html" ]; then
