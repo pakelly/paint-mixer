@@ -191,6 +191,32 @@
   .wish-controls button { font-size: 0.78rem; }
   .wish-controls .wish-toggle-label { font-size: 0.8rem; color: var(--dim); display: flex; align-items: center; gap: 6px; }
   .wish-controls .wish-toggle-label input { accent-color: var(--yellow); }
+  /* Custom Mix tab */
+  .cm-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .cm-selects { flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 12px; }
+  .cm-field { display: flex; flex-direction: column; gap: 4px; }
+  .cm-field label { font-size: 0.8rem; color: var(--dim); }
+  .cm-field select {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 10px; border-radius: 8px; font-size: 0.9rem; cursor: pointer;
+  }
+  .cm-ratios { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  .cm-ratio-row { display: flex; align-items: center; gap: 10px; }
+  .cm-ratio-row .swatch-sm { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.2); flex-shrink: 0; }
+  .cm-ratio-row .pname { font-size: 0.82rem; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cm-ratio-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .cm-ratio-row .pct { font-weight: 700; min-width: 38px; text-align: right; font-size: 0.85rem; }
+  .cm-result { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+  .cm-swatch-lg { width: 120px; height: 120px; border-radius: 12px; border: 3px solid rgba(255,255,255,0.15); flex-shrink: 0; }
+  .cm-result-info { flex: 1; min-width: 200px; }
+  .cm-result-info .hex { font-size: 1.2rem; font-weight: 700; font-family: ui-monospace, monospace; }
+  .cm-result-info .vals { color: var(--dim); font-size: 0.82rem; margin-top: 4px; line-height: 1.5; }
+  .cm-inputs { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .cm-input-item { display: flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  .cm-input-item .pname { font-size: 0.75rem; }
+  .cm-checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.82rem; color: var(--dim); cursor: pointer; user-select: none; }
+  .cm-checkbox-row input { accent-color: var(--accent); }
+  .cm-hint { color: var(--dim); font-size: 0.78rem; margin-top: 10px; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -200,6 +226,7 @@
 
 <div class="tabs">
   <button class="tab active" data-tab="mix">Mix toward color</button>
+  <button class="tab" data-tab="custom">Custom Mix</button>
   <button class="tab" data-tab="collection">My paints</button>
   <button class="tab" data-tab="browse">Browse all</button>
   <button class="tab" data-tab="analysis">Analysis</button>
@@ -258,6 +285,47 @@
     </details>
   </div>
   <div class="results" id="mix-results"></div>
+</div>
+
+<!-- ============ CUSTOM MIX TAB ============ -->
+<div id="tab-custom" class="tab-content" style="display:none">
+  <div class="panel">
+    <h2>Custom Mix — predict the result</h2>
+    <div class="note" style="margin-bottom:14px">Select 2–3 paints, adjust ratios, and see the predicted mixed color. Optionally add a value modifier (black/white/grey) to shift lightness.</div>
+    <div class="cm-row">
+      <div class="cm-selects">
+        <div class="cm-field">
+          <label>Paint 1</label>
+          <select id="cm-paint1"><option value="">— select —</option></select>
+        </div>
+        <div class="cm-field">
+          <label>Paint 2</label>
+          <select id="cm-paint2"><option value="">— select —</option></select>
+        </div>
+        <div class="cm-field">
+          <label>Paint 3 (optional)</label>
+          <select id="cm-paint3"><option value="">— none —</option></select>
+        </div>
+        <label class="cm-checkbox-row"><input type="checkbox" id="cm-use-modifier"> Add value modifier</label>
+        <div class="cm-field" id="cm-modifier-field" style="display:none">
+          <label>Value adjust (optional)</label>
+          <select id="cm-modifier"><option value="">— select —</option></select>
+        </div>
+      </div>
+      <div style="flex:1;min-width:300px">
+        <div class="cm-ratios" id="cm-ratios"></div>
+        <div class="cm-result" id="cm-result" style="display:none">
+          <div class="cm-swatch-lg" id="cm-swatch"></div>
+          <div class="cm-result-info">
+            <div class="hex" id="cm-hex">—</div>
+            <div class="vals" id="cm-vals"></div>
+          </div>
+        </div>
+        <div class="cm-inputs" id="cm-inputs"></div>
+        <div class="cm-hint" id="cm-hint">Select at least 2 paints to see a predicted mix.</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ============ COLLECTION TAB ============ -->
@@ -1491,6 +1559,182 @@ function clearColorSearch() {
   renderBrowse();
 }
 doMix();
+
+// ================= CUSTOM MIX TAB =================
+function populateCustomMixSelects() {
+  const opts = ALL_PAINTS.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  ['cm-paint1','cm-paint2','cm-paint3','cm-modifier'].forEach(id => {
+    const sel = document.getElementById(id);
+    const cur = sel.value;
+    sel.innerHTML = (id === 'cm-paint3' || id === 'cm-modifier' ? '<option value="">— none —</option>' : '<option value="">— select —</option>') + opts;
+    if (cur) sel.value = cur;
+  });
+}
+
+function getCustomMixState() {
+  const paints = [];
+  const ratios = [];
+  const ids = ['cm-paint1','cm-paint2','cm-paint3'];
+  const sliderIds = ['cm-slider-0','cm-slider-1','cm-slider-2'];
+  for (let i = 0; i < 3; i++) {
+    const name = document.getElementById(ids[i]).value;
+    if (!name) continue;
+    const p = ALL_PAINTS.find(x => x.name === name);
+    if (!p) continue;
+    const rgb = hexToRgb(p.hex);
+    const slider = document.getElementById(sliderIds[i]);
+    const ratio = slider ? parseFloat(slider.value) / 100 : 1 / paints.length;
+    paints.push({ ...p, rgb });
+    ratios.push(ratio);
+  }
+  // Value modifier
+  const useMod = document.getElementById('cm-use-modifier').checked;
+  if (useMod) {
+    const modName = document.getElementById('cm-modifier').value;
+    if (modName) {
+      const mp = ALL_PAINTS.find(x => x.name === modName);
+      if (mp) {
+        const mrgb = hexToRgb(mp.hex);
+        const modSlider = document.getElementById('cm-slider-mod');
+        const modRatio = modSlider ? parseFloat(modSlider.value) / 100 : 0;
+        paints.push({ ...mp, rgb: mrgb });
+        ratios.push(modRatio);
+      }
+    }
+  }
+  return { paints, ratios };
+}
+
+function normalizeCustomSliders(changedIdx) {
+  // Collect active slider values
+  const sliders = [];
+  const ids = ['cm-paint1','cm-paint2','cm-paint3'];
+  for (let i = 0; i < 3; i++) {
+    const name = document.getElementById(ids[i]).value;
+    if (!name) continue;
+    const slider = document.getElementById('cm-slider-' + i);
+    if (slider) sliders.push({ id: 'cm-slider-' + i, idx: i, val: parseFloat(slider.value) });
+  }
+  const useMod = document.getElementById('cm-use-modifier').checked;
+  if (useMod && document.getElementById('cm-modifier').value) {
+    const modSlider = document.getElementById('cm-slider-mod');
+    if (modSlider) sliders.push({ id: 'cm-slider-mod', idx: -1, val: parseFloat(modSlider.value) });
+  }
+  if (sliders.length < 2) return;
+  // Find the changed one
+  let changed;
+  if (changedIdx === -1) changed = sliders.find(s => s.id === 'cm-slider-mod');
+  else changed = sliders.find(s => s.idx === changedIdx);
+  if (!changed) changed = sliders[0];
+  const changedVal = changed.val;
+  const remaining = 100 - changedVal;
+  // Sum of others
+  const others = sliders.filter(s => s !== changed);
+  const otherSum = others.reduce((a, s) => a + s.val, 0);
+  if (otherSum > 0) {
+    others.forEach(s => {
+      s.val = (s.val / otherSum) * remaining;
+    });
+  } else {
+    // Equal distribution
+    others.forEach(s => { s.val = remaining / others.length; });
+  }
+  // Apply
+  sliders.forEach(s => {
+    const el = document.getElementById(s.id);
+    el.value = Math.round(s.val);
+    const pctEl = document.getElementById(s.id + '-pct');
+    if (pctEl) pctEl.textContent = Math.round(s.val) + '%';
+  });
+}
+
+function renderCustomMixSliders() {
+  const container = document.getElementById('cm-ratios');
+  const ids = ['cm-paint1','cm-paint2','cm-paint3'];
+  const active = [];
+  for (let i = 0; i < 3; i++) {
+    const name = document.getElementById(ids[i]).value;
+    if (!name) continue;
+    const p = ALL_PAINTS.find(x => x.name === name);
+    if (!p) continue;
+    active.push({ idx: i, paint: p, sliderId: 'cm-slider-' + i });
+  }
+  const useMod = document.getElementById('cm-use-modifier').checked;
+  const modName = useMod ? document.getElementById('cm-modifier').value : '';
+  let modPaint = null;
+  if (useMod && modName) {
+    modPaint = ALL_PAINTS.find(x => x.name === modName);
+    if (modPaint) active.push({ idx: -1, paint: modPaint, sliderId: 'cm-slider-mod' });
+  }
+  // Equal initial ratios
+  const equalVal = Math.floor(100 / active.length);
+  const remainder = 100 - equalVal * active.length;
+  let html = '';
+  active.forEach((item, i) => {
+    const initVal = i === 0 ? equalVal + remainder : equalVal;
+    html += `<div class="cm-ratio-row">
+      <span class="swatch-sm" style="background:${item.paint.hex}"></span>
+      <span class="pname">${esc(item.paint.name)}</span>
+      <input type="range" id="${item.sliderId}" min="0" max="100" value="${initVal}" oninput="onCustomSliderChange(${item.idx})">
+      <span class="pct" id="${item.sliderId}-pct">${initVal}%</span>
+    </div>`;
+  });
+  container.innerHTML = html;
+  // Show modifier field
+  document.getElementById('cm-modifier-field').style.display = useMod ? '' : 'none';
+  renderCustomMixResult();
+}
+
+function onCustomSliderChange(idx) {
+  normalizeCustomSliders(idx);
+  renderCustomMixResult();
+}
+
+function renderCustomMixResult() {
+  const { paints, ratios } = getCustomMixState();
+  const resultEl = document.getElementById('cm-result');
+  const inputsEl = document.getElementById('cm-inputs');
+  const hintEl = document.getElementById('cm-hint');
+  if (paints.length < 2) {
+    resultEl.style.display = 'none';
+    inputsEl.innerHTML = '';
+    hintEl.textContent = 'Select at least 2 paints to see a predicted mix.';
+    hintEl.style.display = '';
+    return;
+  }
+  // Normalize ratios to sum to 1
+  const sum = ratios.reduce((a, r) => a + r, 0);
+  if (sum === 0) { resultEl.style.display = 'none'; return; }
+  const normRatios = ratios.map(r => r / sum);
+  // Simulate mix
+  const labResult = simulateMix(paints, normRatios);
+  const rgbResult = labToRgb(labResult);
+  const hexResult = rgbToHex(rgbResult[0], rgbResult[1], rgbResult[2]);
+  const hsv = hsvOf(rgbResult);
+  // Display result
+  document.getElementById('cm-swatch').style.background = hexResult;
+  document.getElementById('cm-hex').textContent = hexResult.toUpperCase();
+  document.getElementById('cm-vals').innerHTML =
+    `Lab: ${labResult[0].toFixed(1)}, ${labResult[1].toFixed(1)}, ${labResult[2].toFixed(1)}<br>` +
+    `HSV: ${hsv[0].toFixed(0)}°, ${(hsv[1]*100).toFixed(0)}%, ${(hsv[2]*100).toFixed(0)}%`;
+  resultEl.style.display = '';
+  hintEl.style.display = 'none';
+  // Show input swatches
+  inputsEl.innerHTML = paints.map((p, i) =>
+    `<div class="cm-input-item">
+      <span class="swatch-sm" style="background:${p.hex}"></span>
+      <span class="pname">${esc(p.name)}</span>
+      <span class="pct">${Math.round(normRatios[i]*100)}%</span>
+    </div>`
+  ).join('');
+}
+
+// Init custom mix selects and events
+populateCustomMixSelects();
+['cm-paint1','cm-paint2','cm-paint3','cm-modifier'].forEach(id => {
+  document.getElementById(id).addEventListener('change', renderCustomMixSliders);
+});
+document.getElementById('cm-use-modifier').addEventListener('change', renderCustomMixSliders);
 </script>
 </body>
 </html>
