@@ -871,7 +871,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   const cardTarget = e.target.closest('.paint-card[data-paint]');
-  if (cardTarget) {
+  if (cardTarget && !cardTarget.closest('#tab-custom')) {
     cyclePaintState(cardTarget.getAttribute('data-paint'));
     return;
   }
@@ -1760,7 +1760,7 @@ function renderCustomMixGrid() {
     else if (p.wished) cls += ' wishlist';
     if (selectedNames.has(p.name)) cls += ' cm-selected';
     const stateLabel = p.owned ? '✓' : (p.wished ? '★' : '○');
-    return `<div class="${cls}" data-paint="${esc(p.name)}" onclick="addCustomPaint('${esc(p.name).replace(/'/g,"\\'")}')">
+    return `<div class="${cls}" data-paint="${esc(p.name)}" onclick="event.stopPropagation(); addCustomPaint('${esc(p.name).replace(/'/g,"\\'")}')">
       <div class="check">✓</div><div class="wishlist-mark">★</div>
       <div class="bar" style="background:${p.hex}"></div>
       <div class="pname">${esc(p.name)}</div>
