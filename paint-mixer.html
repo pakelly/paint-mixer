@@ -2160,6 +2160,9 @@ cmInitModifierSelect();
 document.getElementById('cm-state').value = 'owned';
 renderCustomMixGrid();
 renderCustomMix();
+renderCollection();
+renderWishlist();
+renderBrowse();
 ['cm-paint1','cm-paint2','cm-paint3','cm-modifier'].forEach(id => {
   document.getElementById(id).addEventListener('change', renderCustomMixSliders);
 });
