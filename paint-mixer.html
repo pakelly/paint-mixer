@@ -202,8 +202,7 @@
   <button class="tab active" data-tab="mix">Mix toward color</button>
   <button class="tab" data-tab="collection">My paints</button>
   <button class="tab" data-tab="browse">Browse all</button>
-  <button class="tab" data-tab="gaps">Collection gaps</button>
-  <button class="tab" data-tab="coverage">Coverage</button>
+  <button class="tab" data-tab="analysis">Analysis</button>
 </div>
 
 <!-- ============ MIX TAB ============ -->
@@ -336,14 +335,15 @@
   </div>
 </div>
 
-<!-- ============ GAPS TAB ============ -->
-<div id="tab-gaps" class="tab-content" style="display:none">
+<!-- ============ ANALYSIS TAB ============ -->
+<div id="tab-analysis" class="tab-content" style="display:none">
   <div class="panel">
     <h2>Collection analysis</h2>
+    <div class="note" style="margin-bottom:12px">Measures coverage (what % of the achievable color wheel your collection can reach at ΔE &lt; 3), identifies hardest-to-reach colors, and recommends paints to add — all in one run.</div>
     <div class="row" style="margin-bottom:12px">
       <div class="field">
         <label>Paint pool</label>
-        <select id="gaps-pool">
+        <select id="analysis-pool">
           <option value="owned" selected>Owned</option>
           <option value="owned-wish">Owned + Wishlist</option>
           <option value="all">All paints</option>
@@ -351,7 +351,7 @@
       </div>
       <div class="field">
         <label>Recommendations</label>
-        <select id="gaps-depth">
+        <select id="analysis-depth">
           <option value="1">1 paint</option>
           <option value="2">2 paints</option>
           <option value="3" selected>3 paints</option>
@@ -361,42 +361,19 @@
       </div>
       <div class="field">
         <label>Mix depth</label>
-        <select id="gaps-mix-depth">
+        <select id="analysis-mix-depth">
           <option value="2" selected>2-paint mixes</option>
           <option value="3">3-paint mixes</option>
         </select>
       </div>
-      <button id="gaps-run" class="secondary">Run analysis</button>
-      <span class="mode-note" id="gaps-note"></span>
+      <button id="analysis-run" class="secondary">Run analysis</button>
+      <span class="mode-note" id="analysis-note"></span>
     </div>
-    <div class="progress-bar" id="gaps-progress" style="display:none"><div class="progress-fill" id="gaps-progress-fill" style="width:0%"></div></div>
-    <div class="note">Section 1: colors your collection can't reach. Section 2: recommended paints to add, chosen greedily — each pick is the best single paint for the remaining gaps after previous picks. Uses coarse filter + fast grid.</div>
-    <div class="gaps-list" id="gaps-list" style="margin-top:14px"></div>
-  </div>
-</div>
-
-<!-- ============ COVERAGE TAB ============ -->
-<div id="tab-coverage" class="tab-content" style="display:none">
-  <div class="panel">
-    <h2>Color space coverage</h2>
-    <div class="note" style="margin-bottom:12px">Measures what percentage of the achievable color wheel your collection can reach at ΔE &lt; 3 (barely perceptible). The achievable gamut is defined by what any combination of the full paint line can mix. Updates progressively — you'll see results as each phase computes.</div>
-    <div class="row" style="margin-bottom:12px">
-      <div class="field">
-        <label>Paint pool</label>
-        <select id="cov-pool">
-          <option value="owned" selected>Owned</option>
-          <option value="owned-wish">Owned + Wishlist</option>
-          <option value="all">All paints</option>
-        </select>
-      </div>
-      <button id="cov-run" class="secondary">Run coverage analysis</button>
-      <span class="mode-note" id="cov-note"></span>
-    </div>
-    <div class="progress-bar" id="cov-progress" style="display:none"><div class="progress-fill" id="cov-progress-fill" style="width:0%"></div></div>
-    <div id="cov-summary" style="margin-top:14px"></div>
-    <div id="cov-hue-chart" style="margin-top:16px"></div>
-    <div id="cov-greedy" style="margin-top:16px"></div>
-    <div id="cov-worst" style="margin-top:16px"></div>
+    <div class="progress-bar" id="analysis-progress" style="display:none"><div class="progress-fill" id="analysis-progress-fill" style="width:0%"></div></div>
+    <div id="analysis-summary" style="margin-top:14px"></div>
+    <div id="analysis-hue-chart" style="margin-top:16px"></div>
+    <div id="analysis-gaps" style="margin-top:16px"></div>
+    <div id="analysis-greedy" style="margin-top:16px"></div>
   </div>
 </div>
 
@@ -1009,27 +986,34 @@ function cyclePaintState(name) {
   deferredRender();
 }
 
-// ================= GAPS TAB (greedy sequential) =================
-// ================= GAPS TAB (Web Worker) =================
-function runGaps() {
-  const btn = document.getElementById('gaps-run');
-  const depth = parseInt(document.getElementById('gaps-depth').value);
-  const mixDepth = parseInt(document.getElementById('gaps-mix-depth').value);
-  const listEl = document.getElementById('gaps-list');
-  const noteEl = document.getElementById('gaps-note');
-  const progressBar = document.getElementById('gaps-progress');
-  const progressFill = document.getElementById('gaps-progress-fill');
+// ================= ANALYSIS TAB (Unified Web Worker) =================
+const COV_THRESHOLD = 3;
+
+function runAnalysis() {
+  const btn = document.getElementById('analysis-run');
+  const depth = parseInt(document.getElementById('analysis-depth').value);
+  const mixDepth = parseInt(document.getElementById('analysis-mix-depth').value);
+  const noteEl = document.getElementById('analysis-note');
+  const progressBar = document.getElementById('analysis-progress');
+  const progressFill = document.getElementById('analysis-progress-fill');
+  const summaryEl = document.getElementById('analysis-summary');
+  const hueChartEl = document.getElementById('analysis-hue-chart');
+  const gapsEl = document.getElementById('analysis-gaps');
+  const greedyEl = document.getElementById('analysis-greedy');
 
   btn.disabled = true;
   btn.textContent = 'Analyzing…';
-  listEl.innerHTML = '';
+  summaryEl.innerHTML = '';
+  hueChartEl.innerHTML = '';
+  gapsEl.innerHTML = '';
+  greedyEl.innerHTML = '';
   noteEl.textContent = 'Starting…';
   progressBar.style.display = 'block';
   progressFill.style.width = '0%';
 
-  // Exclude Metallics from gap analysis
+  // Exclude Metallics from analysis
   const analysisPaints = ALL_PAINTS.filter(p => p.type !== 'Metallic');
-  const poolMode = document.getElementById('gaps-pool') ? document.getElementById('gaps-pool').value : 'owned';
+  const poolMode = document.getElementById('analysis-pool') ? document.getElementById('analysis-pool').value : 'owned';
   let collectionForAnalysis;
   let ownedOnlyForAnalysis = null;
   if (poolMode === 'all') {
@@ -1041,30 +1025,38 @@ function runGaps() {
     collectionForAnalysis = [...COLLECTION_NAMES].filter(n => analysisPaints.some(p => p.name === n));
   }
 
+  // Build the unified worker — injects shared helpers once, runs all 3 phases
   const workerCode = [
     'const PAINTS = ' + JSON.stringify(analysisPaints) + ';',
+    'const GAMUT = ' + JSON.stringify(PRECOMPUTED_GAMUT) + ';',
+    'const THRESHOLD = ' + COV_THRESHOLD + ';',
     'const COLLECTION = ' + JSON.stringify(collectionForAnalysis) + ';',
     'const DEPTH = ' + depth + ';',
     'const MIX_DEPTH = ' + mixDepth + ';',
     'const OWNED_ONLY = ' + JSON.stringify(ownedOnlyForAnalysis || []) + ';',
     'const SHOW_WISH_IMPACT = ' + (ownedOnlyForAnalysis ? 'true' : 'false') + ';',
 
+    // === SHARED HELPERS (injected once) ===
     `function hexToRgb(hex){const h=hex.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
     function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
+    function linearToSrgb(c){return c<=0.0031308?c*12.92:1.055*Math.pow(c,1/2.4)-0.055;}
+    function rgbLinear(rgb){return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])];}
     function rgbToXyz(rgb){const[r,g,b]=[srgbToLinear(rgb[0]),srgbToLinear(rgb[1]),srgbToLinear(rgb[2])];return[r*0.4124+g*0.3576+b*0.1805,r*0.2126+g*0.7152+b*0.0722,r*0.0193+g*0.1192+b*0.9505];}
     function xyzToLab([X,Y,Z]){const Xn=0.95047,Yn=1.0,Zn=1.08883;const f=t=>t>0.008856?Math.cbrt(t):(7.787*t+16/116);return[116*f(X/Xn)-16,500*(f(X/Xn)-f(Y/Yn)),200*(f(Y/Yn)-f(Z/Zn))];}
     function rgbToLab(rgb){return xyzToLab(rgbToXyz(rgb));}
-    function rgbLinear(rgb){return [srgbToLinear(rgb[0]), srgbToLinear(rgb[1]), srgbToLinear(rgb[2])];}
-    function linearToSrgb(c){return c<=0.0031308?c*12.92:1.055*Math.pow(c,1/2.4)-0.055;}
+    function rgbToHsv([r,g,b]){const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;if(d!==0){if(max===r)h=60*((g-b)/d%6);else if(max===g)h=60*((b-r)/d+2);else h=60*((r-g)/d+4);}if(h<0)h+=360;return[h,max===0?0:d/max,max];}
     function ciede2000(l1,l2){const[L1,a1,b1]=l1,[L2,a2,b2]=l2;const C1=Math.hypot(a1,b1),C2=Math.hypot(a2,b2);const Cbar=(C1+C2)/2,Cbar7=Math.pow(Cbar,7);const G=0.5*(1-Math.sqrt(Cbar7/(Cbar7+Math.pow(25,7))));const a1p=a1*(1+G),a2p=a2*(1+G);const C1p=Math.hypot(a1p,b1),C2p=Math.hypot(a2p,b2);let h1p=Math.atan2(b1,a1p)*180/Math.PI;if(h1p<0)h1p+=360;let h2p=Math.atan2(b2,a2p)*180/Math.PI;if(h2p<0)h2p+=360;const dLp=L2-L1,dCp=C2p-C1p;let dhp=0;if(C1p*C2p!==0){let d=h2p-h1p;if(d>180)d-=360;else if(d<-180)d+=360;dhp=d;}const dHp=2*Math.sqrt(C1p*C2p)*Math.sin(dhp*Math.PI/360);const Lbarp=(L1+L2)/2,Cbarp=(C1p+C2p)/2;let hbarp=0;if(C1p*C2p!==0){hbarp=(h1p+h2p)/2;if(Math.abs(h1p-h2p)>180){if(h1p+h2p<360)hbarp+=180;else hbarp-=180;}}const T=1-0.17*Math.cos((hbarp-30)*Math.PI/180)+0.24*Math.cos(2*hbarp*Math.PI/180)-0.32*Math.cos((3*hbarp+6)*Math.PI/180)-0.20*Math.cos((4*hbarp-63)*Math.PI/180);const dTheta=30*Math.exp(-Math.pow((hbarp-275)/25,2));const RC=2*Math.sqrt(Math.pow(Cbarp,7)/(Math.pow(Cbarp,7)+Math.pow(25,7)));const SL=1+(0.015*Math.pow(Lbarp-50,2))/Math.sqrt(20+Math.pow(Lbarp-50,2));const SC=1+0.045*Cbarp;const SH=1+0.015*Cbarp*T;const RT=-Math.sin(2*dTheta*Math.PI/180)*RC;const dLpSL=dLp/SL,dCpSC=dCp/SC,dHpSH=dHp/SH;return Math.sqrt(dLpSL*dLpSL+dCpSC*dCpSC+dHpSH*dHpSH+RT*dCpSC*dHpSH);}
     const eps=1e-6;
-    function simulateMix(paints,ratios){const logSum=[0,0,0];for(let i=0;i<paints.length;i++){const r=ratios[i];if(r<=0)continue;const lin=rgbLinear(paints[i].rgb);logSum[0]+=r*Math.log(lin[0]+eps);logSum[1]+=r*Math.log(lin[1]+eps);logSum[2]+=r*Math.log(lin[2]+eps);}const out=[Math.exp(logSum[0]),Math.exp(logSum[1]),Math.exp(logSum[2])];return rgbToLab([linearToSrgb(out[0]),linearToSrgb(out[1]),linearToSrgb(out[2])]);}`,
+    function simulateMix(paints,ratios){const logSum=[0,0,0];for(let i=0;i<paints.length;i++){const r=ratios[i];if(r<=0)continue;const lin=rgbLinear(paints[i].rgb);logSum[0]+=r*Math.log(lin[0]+eps);logSum[1]+=r*Math.log(lin[1]+eps);logSum[2]+=r*Math.log(lin[2]+eps);}const out=[Math.exp(logSum[0]),Math.exp(logSum[1]),Math.exp(logSum[2])];return rgbToLab([linearToSrgb(out[0]),linearToSrgb(out[1]),linearToSrgb(out[2])]);}
+    function mix2rgbLin(a,b,r){return[Math.pow(a.rgb[0],r)*Math.pow(b.rgb[0],1-r),Math.pow(a.rgb[1],r)*Math.pow(b.rgb[1],1-r),Math.pow(a.rgb[2],r)*Math.pow(b.rgb[2],1-r)];}`,
 
-    `const allPaints = PAINTS.map(p=>{const rgb=hexToRgb(p.hex);return{...p,rgb,lab:rgbToLab(rgb)};});
+    // === PAINT DATA SETUP ===
+    `const allPaints = PAINTS.map(p=>{const rgb=hexToRgb(p.hex);return{...p,rgb,lab:rgbToLab(rgb),hsv:rgbToHsv(rgb)};});
     const collNames = new Set(COLLECTION);
     let mine = allPaints.filter(p => collNames.has(p.name));
     let ownedSet = new Set(mine.map(p=>p.name));`,
 
+    // === FINDMIX (from gaps worker — full 2/3-paint grid search) ===
     `function findMix(paints, targetLab, maxPaints, grid) {
       maxPaints = maxPaints || 3;
       grid = grid || 5;
@@ -1115,6 +1107,7 @@ function runGaps() {
       return best;
     }`,
 
+    // === VALUEADJUST (from gaps worker) ===
     `function valueAdjust(baseMix, paints, targetLab) {
       if (!baseMix.paints || baseMix.dE < 0.5) return baseMix;
       let darkest = null, lightest = null;
@@ -1151,56 +1144,83 @@ function runGaps() {
       return best;
     }`,
 
-    `// Phase 1: Baseline
-    self.postMessage({ type: 'status', text: 'Computing baseline (' + PAINTS.length + ' targets)…', progress: 0 });
-    const results = [];
+    // === FINDMIXHUE (from coverage worker — fast hue-filtered 2-paint search) ===
+    `function findMixHue(paintSet, targetLab, targetHue) {
+      const candidates = paintSet.map(p=>({p,hd:Math.min(Math.abs(p.hsv[0]-targetHue),360-Math.abs(p.hsv[0]-targetHue))})).sort((a,b)=>a.hd-b.hd).slice(0,Math.min(30,paintSet.length)).map(x=>x.p);
+      let best = { dE: 999 };
+      for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++)for(let r=0.15;r<=0.85;r+=0.1){
+        const mixLab=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r));const dE=ciede2000(mixLab,targetLab);
+        if(dE<best.dE){for(let r2=Math.max(0.05,r-0.08);r2<=Math.min(0.95,r+0.08);r2+=0.02){const m2=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r2));const d2=ciede2000(m2,targetLab);if(d2<best.dE)best={dE:d2};}best={dE:best.dE<999?best.dE:dE};}
+      }
+      return best;
+    }`,
+
+    // === PHASE 1: COVERAGE (gamut + hue histogram + wishlist impact) ===
+    `// Phase 1: Gamut is precomputed - send immediately
+    self.postMessage({ type: 'gamut', gamut: GAMUT, totalGrid: 2400 });
+
+    // Phase 1b: If owned+wish, compute owned-only coverage first for impact stats
+    let wishImpact = null;
+    if (SHOW_WISH_IMPACT && OWNED_ONLY.length > 0) {
+      const ownedOnlySet = new Set(OWNED_ONLY);
+      const ownedPaints = allPaints.filter(p => ownedOnlySet.has(p.name));
+      let ownedCovered = 0;
+      for (let i = 0; i < GAMUT.length; i++) {
+        const gp = GAMUT[i];
+        const best = findMixHue(ownedPaints, gp.lab, gp.h);
+        if (best.dE < THRESHOLD) ownedCovered++;
+      }
+      const wishCount = mine.length - ownedPaints.length;
+      wishImpact = { ownedCovered, ownedTotal: GAMUT.length, ownedPct: ownedCovered / GAMUT.length * 100, wishCount, ownedCount: ownedPaints.length };
+      self.postMessage({ type: 'wish-impact', wishImpact });
+    }
+
+    // Phase 1c: Collection coverage (chunked)
+    let covered = 0;
+    const uncovered = [];
+    const covByHue = {};
+    const CHUNK = 80;
+    for (let i = 0; i < GAMUT.length; i++) {
+      const gp = GAMUT[i];
+      const best = findMixHue(mine, gp.lab, gp.h);
+      const isCov = best.dE < THRESHOLD;
+      if (isCov) covered++;
+      else uncovered.push({ h: gp.h, s: gp.s, v: gp.v, lab: gp.lab, dE: best.dE });
+      const hb = Math.floor(gp.h / 30) * 30;
+      if (!covByHue[hb]) covByHue[hb] = { total: 0, covered: 0 };
+      covByHue[hb].total++;
+      if (isCov) covByHue[hb].covered++;
+      if (i % CHUNK === 0 || i === GAMUT.length - 1) {
+        self.postMessage({ type: 'coverage-progress', covered, total: GAMUT.length, uncovered: uncovered.length, covByHue, index: i + 1, wishImpact });
+      }
+    }
+    uncovered.sort((a,b) => b.dE - a.dE);
+    const coveragePct = (covered / GAMUT.length * 100).toFixed(1);
+    self.postMessage({ type: 'coverage-done', covered, total: GAMUT.length, uncoveredCount: uncovered.length, worst: uncovered.slice(0, 15), coveragePct, wishImpact });`,
+
+    // === PHASE 2: GAP DETAIL (baseline worst-colors using findMix) ===
+    `// Phase 2: Baseline worst-colors (hardest paints to reach with collection)
+    self.postMessage({ type: 'status', text: 'Computing gap analysis (' + PAINTS.length + ' targets)…', progress: 50 });
+    const gapResults = [];
     for (let i = 0; i < PAINTS.length; i++) {
       const target = PAINTS[i];
       const tLab = rgbToLab(hexToRgb(target.hex));
       let best = findMix(mine, tLab, MIX_DEPTH, 5);
       best = valueAdjust(best, mine, tLab);
-      results.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
-      if (i % 10 === 0) self.postMessage({ type: 'progress', progress: (i / PAINTS.length * 30), text: 'Baseline: ' + (i+1) + '/' + PAINTS.length });
+      gapResults.push({ target: target.name, targetHex: target.hex, dE: best.dE, mix: best.paints });
+      if (i % 10 === 0) self.postMessage({ type: 'progress', progress: 50 + (i / PAINTS.length * 15), text: 'Gap analysis: ' + (i+1) + '/' + PAINTS.length });
     }
-    results.sort((a,b) => b.dE - a.dE);
-    let currentTotal = results.reduce((s,r) => s + r.dE, 0);
-    const baseAvgDE = currentTotal / results.length;
-    const baseTotal = currentTotal;
-    const worst = results.slice(0, 8);
+    gapResults.sort((a,b) => b.dE - a.dE);
+    const baseAvgDE = gapResults.reduce((s,r) => s + r.dE, 0) / gapResults.length;
+    const baseTotal = gapResults.reduce((s,r) => s + r.dE, 0);
+    const worstGaps = gapResults.slice(0, 8);
+    self.postMessage({ type: 'gaps-baseline', worstGaps, baseAvgDE, totalPaints: PAINTS.length, coveragePct, wishImpact });`,
 
-    // Wishlist impact analysis
-    let wishStats = null;
-    if (SHOW_WISH_IMPACT && OWNED_ONLY.length > 0) {
-      const ownedSet = new Set(OWNED_ONLY);
-      const ownedMine = allPaints.filter(p => ownedSet.has(p.name));
-      let ownedTotal = 0;
-      const ownedWorst = [];
-      for (let i = 0; i < PAINTS.length; i++) {
-        const target = PAINTS[i];
-        const tLab = rgbToLab(hexToRgb(target.hex));
-        let best = findMix(ownedMine, tLab, MIX_DEPTH, 5);
-        best = valueAdjust(best, ownedMine, tLab);
-        ownedTotal += best.dE;
-        ownedWorst.push({ name: target.name, hex: target.hex, dE: best.dE });
-      }
-      ownedWorst.sort((a,b) => b.dE - a.dE);
-      const ownedAvg = ownedTotal / PAINTS.length;
-      const wishCount = mine.length - ownedMine.length;
-      const improvement = ownedAvg - baseAvgDE;
-      const improvementPct = (improvement / ownedAvg * 100);
-      const ownedWorstTop = ownedWorst.slice(0, 8).map(w => {
-        const newResult = results.find(r => r.target === w.name);
-        return { name: w.name, hex: w.hex, oldDE: w.dE, newDE: newResult ? newResult.dE : null };
-      }).filter(w => w.newDE !== null && w.oldDE - w.newDE > 1).slice(0, 5);
-      wishStats = { ownedAvg, ownedTotal, baseAvgDE, improvement, improvementPct, wishCount, ownedCount: ownedMine.length, ownedWorstTop };
-    }
-    self.postMessage({ type: 'baseline', worst, baseAvgDE, totalPaints: PAINTS.length, wishStats });`,
-
-    `// Phase 2: Greedy sequential selection
+    // === PHASE 3: GREEDY RECOMMENDATIONS (from gaps worker — sequential picks) ===
+    `// Phase 3: Greedy sequential selection
     const picks = [];
     for (let round = 0; round < DEPTH; round++) {
-      // Re-evaluate only worst 60 targets (speed: adding 1 paint won't help already-good targets)
-      const prevWorst = results.slice(0, 60);  // from baseline or previous round
+      const prevWorst = gapResults.slice(0, 60);
       const currentResults = [];
       for (let i = 0; i < prevWorst.length; i++) {
         const target = prevWorst[i];
@@ -1208,13 +1228,13 @@ function runGaps() {
         let best = findMix(mine, tLab, MIX_DEPTH, 5);
         best = valueAdjust(best, mine, tLab);
         currentResults.push({ target: target.target || target.name, targetHex: target.targetHex || target.hex, dE: best.dE });
-        if (i % 10 === 0) self.postMessage({ type: 'progress', progress: 30 + (round / DEPTH) * 10, text: 'Round ' + (round+1) + '/' + DEPTH + ' — re-evaluating gaps (' + (i+1) + '/' + prevWorst.length + ')' });
+        if (i % 10 === 0) self.postMessage({ type: 'progress', progress: 65 + (round / DEPTH) * 5, text: 'Round ' + (round+1) + '/' + DEPTH + ' — re-evaluating gaps (' + (i+1) + '/' + prevWorst.length + ')' });
       }
       currentResults.sort((a,b) => b.dE - a.dE);
       const currentWorst = currentResults.slice(0, 8);
-      currentTotal = currentResults.reduce((s,r) => s + r.dE, 0);
+      const currentTotal = currentResults.reduce((s,r) => s + r.dE, 0);
 
-      // Coarse filter
+      // Coarse filter candidates
       const unowned = allPaints.filter(p => !ownedSet.has(p.name));
       const worstLabs = currentWorst.map(w => rgbToLab(hexToRgb(w.targetHex)));
       const scored = unowned.map(p => {
@@ -1225,7 +1245,7 @@ function runGaps() {
       scored.sort((a,b) => a.score - b.score);
       const candidates = scored.slice(0, 25);
 
-      // Test each candidate — only against worst 40 targets (speed optimization)
+      // Test each candidate against worst 40 targets
       const worst40 = currentResults.slice(0, 40);
       const worst40Total = worst40.reduce((s,r) => s + r.dE, 0);
       const improvements = [];
@@ -1239,27 +1259,26 @@ function runGaps() {
           best = valueAdjust(best, aug, tLab);
           augTotal += best.dE;
         }
-        // Scale to full line for approximate avg
         const scaledAvg = (augTotal / worst40.length);
         improvements.push({ name: c.name, hex: c.hex, type: c.type, brand: c.brand, improvement: worst40Total - augTotal, newAvg: scaledAvg, approx: true });
-        const pct = 40 + (round / DEPTH) * 60 + ((ci + 1) / candidates.length) * (60 / DEPTH);
+        const pct = 70 + (round / DEPTH) * 30 + ((ci + 1) / candidates.length) * (30 / DEPTH);
         self.postMessage({ type: 'progress', progress: pct, text: 'Round ' + (round+1) + '/' + DEPTH + ' — candidate ' + (ci+1) + '/' + candidates.length + ' (' + c.name + ')' });
       }
       improvements.sort((a,b) => b.improvement - a.improvement);
-      const best = improvements[0];
-      if (!best || best.improvement <= 0) break;
-      picks.push(best);
-      mine = mine.concat([{ name: best.name, hex: best.hex, type: best.type, rgb: hexToRgb(best.hex), lab: rgbToLab(hexToRgb(best.hex)) }]);
-      ownedSet.add(best.name);
-      self.postMessage({ type: 'pick', pick: best, round: round + 1, baseTotal });
+      const bestPick = improvements[0];
+      if (!bestPick || bestPick.improvement <= 0) break;
+      picks.push(bestPick);
+      mine = mine.concat([{ name: bestPick.name, hex: bestPick.hex, type: bestPick.type, rgb: hexToRgb(bestPick.hex), lab: rgbToLab(hexToRgb(bestPick.hex)) }]);
+      ownedSet.add(bestPick.name);
+      self.postMessage({ type: 'pick', pick: bestPick, round: round + 1, baseTotal });
     }
 
-    self.postMessage({ type: 'done', picks, baseAvgDE, totalPaints: PAINTS.length });`
+    self.postMessage({ type: 'done', picks, baseAvgDE, totalPaints: PAINTS.length, coveragePct });`
   ].join('\n');
 
   const blob = new Blob([workerCode], { type: 'application/javascript' });
   const worker = new Worker(URL.createObjectURL(blob));
-  let baselineHTML = '';
+  let gapsHTML = '';
   let picksHTML = '';
 
   worker.onmessage = function(e) {
@@ -1275,30 +1294,75 @@ function runGaps() {
       progressFill.style.width = msg.progress + '%';
     }
 
-    if (msg.type === 'baseline') {
-      baselineHTML = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + msg.totalPaints + ': ' + msg.baseAvgDE.toFixed(2) + ')</span></div>';
-      if (msg.wishStats) {
-        const ws = msg.wishStats;
-        baselineHTML += '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
-          '<b>Wishlist impact:</b> ' + ws.ownedCount + ' owned → ' + (ws.ownedCount + ws.wishCount) + ' with wishlist (' + ws.wishCount + ' wishlisted) ' +
-          '· avg ΔE: <b>' + ws.ownedAvg.toFixed(2) + '</b> → <b>' + ws.baseAvgDE.toFixed(2) + '</b> ' +
-          '(<span style="color:var(--good)">-' + ws.improvement.toFixed(2) + '</span>, ' + ws.improvementPct.toFixed(1) + '% improvement)' +
-          (ws.ownedWorstTop.length > 0 ? '<br><span style="color:var(--dim)">Colors most helped by wishlist:</span> ' + ws.ownedWorstTop.map(w => esc(w.name) + ' (ΔE ' + w.oldDE.toFixed(1) + '→' + w.newDE.toFixed(1) + ')').join(', ') : '') +
-          '</div>';
+    // --- Phase 1: Coverage ---
+    if (msg.type === 'gamut') {
+      const pct = (msg.gamut.length / msg.totalGrid * 100).toFixed(1);
+      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.gamut.length + '</b> colors (' + pct + '% of HSV space) — precomputed</div>';
+      noteEl.textContent = 'Phase 1: Measuring collection coverage…';
+      progressFill.style.width = '3%';
+    }
+
+    if (msg.type === 'wish-impact') {
+      window._analysisWishImpact = msg.wishImpact;
+    }
+
+    if (msg.type === 'coverage-progress') {
+      const pct = (msg.covered / msg.total * 100).toFixed(1);
+      progressFill.style.width = (5 + msg.index / msg.total * 40) + '%';
+      noteEl.textContent = 'Phase 1: ' + msg.covered + '/' + msg.total + ' (' + pct + '%) — ' + msg.uncovered + ' gaps';
+      let wishHTML = '';
+      if (window._analysisWishImpact) {
+        const wi = window._analysisWishImpact;
+        const delta = msg.covered - wi.ownedCovered;
+        wishHTML = '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
+          '<b>Wishlist impact:</b> ' + wi.ownedCount + ' owned → ' + (wi.ownedCount + wi.wishCount) + ' with wishlist (' + wi.wishCount + ' wishlisted) ' +
+          '· coverage: <b>' + wi.ownedPct.toFixed(1) + '%</b> → <b>' + pct + '%</b> ' +
+          '(<span style=\'color:var(--good)\'>+' + delta + ' colors</span>)</div>';
       }
-      baselineHTML += msg.worst.map(r => {
+      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
+        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncovered + '</div>' +
+        wishHTML;
+      renderHueChart(hueChartEl, msg.covByHue);
+    }
+
+    if (msg.type === 'coverage-done') {
+      const pct = msg.coveragePct;
+      let wishHTML = '';
+      if (msg.wishImpact) {
+        const wi = msg.wishImpact;
+        const delta = msg.covered - wi.ownedCovered;
+        wishHTML = '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
+          '<b>Wishlist impact:</b> ' + wi.ownedCount + ' owned → ' + (wi.ownedCount + wi.wishCount) + ' with wishlist (' + wi.wishCount + ' wishlisted) ' +
+          '· coverage: <b>' + wi.ownedPct.toFixed(1) + '%</b> → <b>' + pct + '%</b> ' +
+          '(<span style=\'color:var(--good)\'>+' + delta + ' colors, +' + (parseFloat(pct) - wi.ownedPct).toFixed(1) + '%</span>)</div>';
+      }
+      progressFill.style.width = '50%';
+      noteEl.textContent = 'Phase 2: Computing gap analysis…';
+      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
+        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncoveredCount + '</div>' +
+        wishHTML;
+      // Show coverage worst gaps (HSV space) temporarily while gap analysis computes
+      gapsEl.innerHTML = '<div class="gap-section-title">Hardest coverage gaps (HSV space)</div>' +
+        msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + Math.round(p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
+    }
+
+    // --- Phase 2: Gap detail ---
+    if (msg.type === 'gaps-baseline') {
+      gapsHTML = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + msg.totalPaints + ': ' + msg.baseAvgDE.toFixed(2) + ')</span></div>';
+      gapsHTML += msg.worstGaps.map(r => {
         const mixStr = r.mix && r.mix.length ? r.mix.map(p => p.name + ' ' + p.ratio + '%' + (p.valueAdjust ? ' (val)' : '')).join(' + ') : 'no mix found';
         return '<div class="gap-item"><span class="swatch" style="background:' + r.targetHex + '"></span><div class="gap-meta"><div class="gap-name">' + esc(r.target) + ' <span class="dE-bad">ΔE ' + r.dE.toFixed(1) + '</span></div><div class="gap-rec">Best with collection: ' + esc(mixStr) + '</div></div></div>';
       }).join('');
-      baselineHTML += '<div class="gap-section-title" style="margin-top:20px">Recommended paints to add</div><div class="note" style="margin-bottom:10px">Greedy sequential — each pick targets the biggest remaining gap.</div><div id="gaps-picks"></div>';
-      listEl.innerHTML = baselineHTML;
+      gapsHTML += '<div class="gap-section-title" style="margin-top:20px">Recommended paints to add</div><div class="note" style="margin-bottom:10px">Greedy sequential — each pick targets the biggest remaining gap.</div><div id="analysis-picks"></div>';
+      gapsEl.innerHTML = gapsHTML;
     }
 
+    // --- Phase 3: Greedy picks ---
     if (msg.type === 'pick') {
       const pct = ((msg.pick.improvement / msg.baseTotal) * 100).toFixed(1);
       const label = msg.round === 1 ? '1st pick' : msg.round === 2 ? '2nd pick' : msg.round === 3 ? '3rd pick' : msg.round + 'th pick';
-      picksHTML += '<div class="gap-item" id="gap-pick-' + msg.round + '"><span class="swatch" style="background:' + msg.pick.hex + '"></span><div class="gap-meta"><div class="gap-name">' + label + ': ' + esc(msg.pick.name) + ' (' + (msg.pick.brand || msg.pick.type) + ')</div><div class="gap-rec">Impact: <b>+' + msg.pick.improvement.toFixed(1) + '</b> total ΔE (' + pct + '%) · avg ΔE after: ' + msg.pick.newAvg.toFixed(2) + '</div></div>' + gapActions(msg.pick.name) + '</div>';
-      const picksEl = document.getElementById('gaps-picks');
+      picksHTML += '<div class="gap-item" id="analysis-pick-' + msg.round + '"><span class="swatch" style="background:' + msg.pick.hex + '"></span><div class="gap-meta"><div class="gap-name">' + label + ': ' + esc(msg.pick.name) + ' (' + (msg.pick.brand || msg.pick.type) + ')</div><div class="gap-rec">Impact: <b>+' + msg.pick.improvement.toFixed(1) + '</b> total ΔE (' + pct + '%) · avg ΔE after: ' + msg.pick.newAvg.toFixed(2) + '</div></div>' + gapActions(msg.pick.name) + '</div>';
+      const picksEl = document.getElementById('analysis-picks');
       if (picksEl) picksEl.innerHTML = picksHTML;
     }
 
@@ -1321,233 +1385,6 @@ function runGaps() {
   };
 }
 
-
-// ================= COVERAGE TAB (Web Worker + precomputed gamut) =================
-const COV_THRESHOLD = 3;
-
-function runCoverage() {
-  const btn = document.getElementById('cov-run');
-  const note = document.getElementById('cov-note');
-  const progressBar = document.getElementById('cov-progress');
-  const progressFill = document.getElementById('cov-progress-fill');
-  const summaryEl = document.getElementById('cov-summary');
-  const hueChartEl = document.getElementById('cov-hue-chart');
-  const greedyEl = document.getElementById('cov-greedy');
-  const worstEl = document.getElementById('cov-worst');
-
-  btn.disabled = true;
-  btn.textContent = 'Running…';
-  progressBar.style.display = 'block';
-  progressFill.style.width = '0%';
-  summaryEl.innerHTML = '';
-  hueChartEl.innerHTML = '';
-  greedyEl.innerHTML = '';
-  worstEl.innerHTML = '';
-
-  // Exclude Metallics from coverage analysis
-  const covPaints = ALL_PAINTS.filter(p => p.type !== 'Metallic');
-  const poolModeCov = document.getElementById('cov-pool') ? document.getElementById('cov-pool').value : 'owned';
-  let collectionForCov;
-  let ownedOnlyForCov = null;
-  if (poolModeCov === 'all') {
-    collectionForCov = covPaints.map(p => p.name);
-  } else if (poolModeCov === 'owned-wish') {
-    collectionForCov = [...new Set([...COLLECTION_NAMES, ...WISHLIST_NAMES])].filter(n => covPaints.some(p => p.name === n));
-    ownedOnlyForCov = [...COLLECTION_NAMES].filter(n => covPaints.some(p => p.name === n));
-  } else {
-    collectionForCov = [...COLLECTION_NAMES].filter(n => covPaints.some(p => p.name === n));
-  }
-  const workerCode = [
-    'const PAINTS = ' + JSON.stringify(covPaints.map(p => ({ name: p.name, hex: p.hex, brand: p.brand, type: p.type }))) + ';',
-    'const GAMUT = ' + JSON.stringify(PRECOMPUTED_GAMUT) + ';',
-    'const THRESHOLD = ' + COV_THRESHOLD + ';',
-    'const COLLECTION = ' + JSON.stringify(collectionForCov) + ';',
-    'const OWNED_ONLY = ' + JSON.stringify(ownedOnlyForCov || []) + ';',
-    'const SHOW_WISH_IMPACT = ' + (ownedOnlyForCov ? 'true' : 'false') + ';',
-
-    `function hexToRgb(hex){const h=hex.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
-    function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
-    function rgbToXyz(rgb){const[r,g,b]=[srgbToLinear(rgb[0]),srgbToLinear(rgb[1]),srgbToLinear(rgb[2])];return[r*0.4124+g*0.3576+b*0.1805,r*0.2126+g*0.7152+b*0.0722,r*0.0193+g*0.1192+b*0.9505];}
-    function xyzToLab([X,Y,Z]){const Xn=0.95047,Yn=1.0,Zn=1.08883;const f=t=>t>0.008856?Math.cbrt(t):(7.787*t+16/116);return[116*f(X/Xn)-16,500*(f(X/Xn)-f(Y/Yn)),200*(f(Y/Yn)-f(Z/Zn))];}
-    function rgbToLab(rgb){return xyzToLab(rgbToXyz(rgb));}
-    function rgbToHsv([r,g,b]){const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;if(d!==0){if(max===r)h=60*((g-b)/d%6);else if(max===g)h=60*((b-r)/d+2);else h=60*((r-g)/d+4);}if(h<0)h+=360;return[h,max===0?0:d/max,max];}
-    function ciede2000(l1,l2){const[L1,a1,b1]=l1,[L2,a2,b2]=l2;const C1=Math.hypot(a1,b1),C2=Math.hypot(a2,b2);const Cbar=(C1+C2)/2,Cbar7=Math.pow(Cbar,7);const G=0.5*(1-Math.sqrt(Cbar7/(Cbar7+Math.pow(25,7))));const a1p=a1*(1+G),a2p=a2*(1+G);const C1p=Math.hypot(a1p,b1),C2p=Math.hypot(a2p,b2);let h1p=Math.atan2(b1,a1p)*180/Math.PI;if(h1p<0)h1p+=360;let h2p=Math.atan2(b2,a2p)*180/Math.PI;if(h2p<0)h2p+=360;const dLp=L2-L1,dCp=C2p-C1p;let dhp=0;if(C1p*C2p!==0){let d=h2p-h1p;if(d>180)d-=360;else if(d<-180)d+=360;dhp=d;}const dHp=2*Math.sqrt(C1p*C2p)*Math.sin(dhp*Math.PI/360);const Lbarp=(L1+L2)/2,Cbarp=(C1p+C2p)/2;let hbarp=0;if(C1p*C2p!==0){hbarp=(h1p+h2p)/2;if(Math.abs(h1p-h2p)>180){if(h1p+h2p<360)hbarp+=180;else hbarp-=180;}}const T=1-0.17*Math.cos((hbarp-30)*Math.PI/180)+0.24*Math.cos(2*hbarp*Math.PI/180)-0.32*Math.cos((3*hbarp+6)*Math.PI/180)-0.20*Math.cos((4*hbarp-63)*Math.PI/180);const dTheta=30*Math.exp(-Math.pow((hbarp-275)/25,2));const RC=2*Math.sqrt(Math.pow(Cbarp,7)/(Math.pow(Cbarp,7)+Math.pow(25,7)));const SL=1+(0.015*Math.pow(Lbarp-50,2))/Math.sqrt(20+Math.pow(Lbarp-50,2));const SC=1+0.045*Cbarp;const SH=1+0.015*Cbarp*T;const RT=-Math.sin(2*dTheta*Math.PI/180)*RC;const dLpSL=dLp/SL,dCpSC=dCp/SC,dHpSH=dHp/SH;return Math.sqrt(dLpSL*dLpSL+dCpSC*dCpSC+dHpSH*dHpSH+RT*dCpSC*dHpSH);}
-    function mix2rgbLin(a,b,r){return[Math.pow(a.rgb[0],r)*Math.pow(b.rgb[0],1-r),Math.pow(a.rgb[1],r)*Math.pow(b.rgb[1],1-r),Math.pow(a.rgb[2],r)*Math.pow(b.rgb[2],1-r)];}`,
-
-    `const allPaints = PAINTS.map(p=>{const rgb=hexToRgb(p.hex);return{...p,rgb,lab:rgbToLab(rgb),hsv:rgbToHsv(rgb)};});
-    const collNames = new Set(COLLECTION);
-    const collPaints = allPaints.filter(p => collNames.has(p.name));`,
-
-    `function findMixHue(paintSet, targetLab, targetHue) {
-      const candidates = paintSet.map(p=>({p,hd:Math.min(Math.abs(p.hsv[0]-targetHue),360-Math.abs(p.hsv[0]-targetHue))})).sort((a,b)=>a.hd-b.hd).slice(0,Math.min(30,paintSet.length)).map(x=>x.p);
-      let best = { dE: 999 };
-      for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++)for(let r=0.15;r<=0.85;r+=0.1){
-        const mixLab=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r));const dE=ciede2000(mixLab,targetLab);
-        if(dE<best.dE){for(let r2=Math.max(0.05,r-0.08);r2<=Math.min(0.95,r+0.08);r2+=0.02){const m2=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r2));const d2=ciede2000(m2,targetLab);if(d2<best.dE)best={dE:d2};}best={dE:best.dE<999?best.dE:dE};}
-      }
-      return best;
-    }`,
-
-    `// Phase 1: Gamut is precomputed - send immediately
-    self.postMessage({ type: 'gamut', gamut: GAMUT, totalGrid: 2400 });
-
-    // Phase 1b: If owned+wish, compute owned-only coverage first for impact stats
-    let wishImpact = null;
-    if (SHOW_WISH_IMPACT && OWNED_ONLY.length > 0) {
-      const ownedSet = new Set(OWNED_ONLY);
-      const ownedPaints = allPaints.filter(p => ownedSet.has(p.name));
-      let ownedCovered = 0;
-      for (let i = 0; i < GAMUT.length; i++) {
-        const gp = GAMUT[i];
-        const best = findMixHue(ownedPaints, gp.lab, gp.h);
-        if (best.dE < THRESHOLD) ownedCovered++;
-      }
-      const wishCount = collPaints.length - ownedPaints.length;
-      wishImpact = { ownedCovered, ownedTotal: GAMUT.length, ownedPct: ownedCovered / GAMUT.length * 100, wishCount, ownedCount: ownedPaints.length };
-      self.postMessage({ type: 'wish-impact', wishImpact });
-    }
-
-    // Phase 2: Collection coverage (chunked)
-    let covered = 0;
-    const uncovered = [];
-    const covByHue = {};
-    const CHUNK = 80;
-    for (let i = 0; i < GAMUT.length; i++) {
-      const gp = GAMUT[i];
-      const best = findMixHue(collPaints, gp.lab, gp.h);
-      const isCov = best.dE < THRESHOLD;
-      if (isCov) covered++;
-      else uncovered.push({ h: gp.h, s: gp.s, v: gp.v, lab: gp.lab, dE: best.dE });
-      const hb = Math.floor(gp.h / 30) * 30;
-      if (!covByHue[hb]) covByHue[hb] = { total: 0, covered: 0 };
-      covByHue[hb].total++;
-      if (isCov) covByHue[hb].covered++;
-      if (i % CHUNK === 0 || i === GAMUT.length - 1) {
-        self.postMessage({ type: 'coverage-progress', covered, total: GAMUT.length, uncovered: uncovered.length, covByHue, index: i + 1 });
-      }
-    }
-    uncovered.sort((a,b) => b.dE - a.dE);
-    self.postMessage({ type: 'coverage-done', covered, total: GAMUT.length, uncoveredCount: uncovered.length, worst: uncovered.slice(0, 15) });`,
-
-    `// Phase 3: Greedy (progressive)
-    const unowned = allPaints.filter(p => !collNames.has(p.name));
-    const GREEDY_SAMPLE = Math.min(50, uncovered.length);
-    const sortedUncov = [...uncovered].sort((a,b) => a.h - b.h);
-    const step = Math.max(1, Math.floor(sortedUncov.length / GREEDY_SAMPLE));
-    const sample = [];
-    for (let i = 0; i < sortedUncov.length && sample.length < GREEDY_SAMPLE; i += step) sample.push(sortedUncov[i]);
-    const results = [];
-    for (let i = 0; i < unowned.length; i++) {
-      const candidate = unowned[i];
-      const testCol = [...collPaints, candidate];
-      let newlyCovered = 0;
-      for (const gp of sample) {
-        const best = findMixHue(testCol, gp.lab, gp.h);
-        if (best.dE < THRESHOLD) newlyCovered++;
-      }
-      results.push({ name: candidate.name, hex: candidate.hex, brand: candidate.brand, count: newlyCovered, total: sample.length });
-      results.sort((a,b) => b.count - a.count);
-      self.postMessage({ type: 'greedy-progress', index: i + 1, total: unowned.length, top5: results.slice(0, 5), uncoveredCount: uncovered.length });
-    }
-    self.postMessage({ type: 'greedy-done', top10: results.slice(0, 10) });`
-  ].join('\n');
-
-  const blob = new Blob([workerCode], { type: 'application/javascript' });
-  const worker = new Worker(URL.createObjectURL(blob));
-
-  worker.onmessage = function(e) {
-    const msg = e.data;
-
-    if (msg.type === 'gamut') {
-      const pct = (msg.gamut.length / msg.totalGrid * 100).toFixed(1);
-      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.gamut.length + '</b> colors (' + pct + '% of HSV space) — precomputed</div>';
-      note.textContent = 'Phase 1b: Measuring owned-only baseline…';
-      progressFill.style.width = '3%';
-    }
-
-    if (msg.type === 'wish-impact') {
-      const wi = msg.wishImpact;
-      const deltaPct = (pctVal => { return wi.ownedPct; })();
-      // Store for later display when coverage-done arrives
-      window._covWishImpact = wi;
-    }
-
-    if (msg.type === 'coverage-progress') {
-      const pct = (msg.covered / msg.total * 100).toFixed(1);
-      progressFill.style.width = (5 + msg.index / msg.total * 45) + '%';
-      note.textContent = 'Phase 2: ' + msg.covered + '/' + msg.total + ' (' + pct + '%) — ' + msg.uncovered + ' gaps';
-      let wishHTML = '';
-      if (window._covWishImpact) {
-        const wi = window._covWishImpact;
-        const delta = msg.covered - wi.ownedCovered;
-        wishHTML = '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
-          '<b>Wishlist impact:</b> ' + wi.ownedCount + ' owned → ' + (wi.ownedCount + wi.wishCount) + ' with wishlist (' + wi.wishCount + ' wishlisted) ' +
-          '· coverage: <b>' + wi.ownedPct.toFixed(1) + '%</b> → <b>' + pct + '%</b> ' +
-          '(<span style=\'color:var(--good)\'>+' + delta + ' colors</span>)</div>';
-      }
-      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
-        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncovered + '</div>' +
-        wishHTML;
-      renderHueChart(hueChartEl, msg.covByHue);
-    }
-
-    if (msg.type === 'coverage-done') {
-      const pct = (msg.covered / msg.total * 100).toFixed(1);
-      let wishHTML = '';
-      if (window._covWishImpact) {
-        const wi = window._covWishImpact;
-        const delta = msg.covered - wi.ownedCovered;
-        wishHTML = '<div class="note" style="margin:8px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:0.8rem">' +
-          '<b>Wishlist impact:</b> ' + wi.ownedCount + ' owned → ' + (wi.ownedCount + wi.wishCount) + ' with wishlist (' + wi.wishCount + ' wishlisted) ' +
-          '· coverage: <b>' + wi.ownedPct.toFixed(1) + '%</b> → <b>' + pct + '%</b> ' +
-          '(<span style=\'color:var(--good)\'>+' + delta + ' colors, +' + (pct - wi.ownedPct).toFixed(1) + '%</span>)</div>';
-      }
-      progressFill.style.width = '50%';
-      note.textContent = 'Phase 3: Testing recommended paints…';
-      summaryEl.innerHTML = '<div class="gap-section-title">Achievable gamut: <b>' + msg.total + '</b> colors</div>' +
-        '<div class="gap-section-title" style="margin-top:6px">Your collection: <b>' + msg.covered + '</b>/' + msg.total + ' (<b>' + pct + '%</b>) — gaps: ' + msg.uncoveredCount + '</div>' +
-        wishHTML;
-      worstEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Hardest gaps</div>' +
-        msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + Math.round(p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
-      greedyEl.innerHTML = '<div class="gap-section-title" style="margin-top:16px">Recommended paints to add</div><div class="note" style="margin-bottom:8px">Live leaderboard — updates after each candidate.</div><div id="cov-greedy-list"></div>';
-    }
-
-    if (msg.type === 'greedy-progress') {
-      progressFill.style.width = (50 + msg.index / msg.total * 50) + '%';
-      note.textContent = 'Phase 3: ' + msg.index + '/' + msg.total + ' candidates tested';
-      const list = document.getElementById('cov-greedy-list');
-      if (list) {
-        list.innerHTML = msg.top5.map((r, idx) => {
-          var proj = Math.round(r.count / r.total * msg.uncoveredCount);
-          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + '</span></div><div class="gap-rec">~' + proj + ' of ' + msg.uncoveredCount + ' gaps filled → ~' + ((msg.covered + proj) / msg.total * 100).toFixed(1) + '% coverage</div></div>' + gapActions(r.name) + '</div>';
-        }).join('');
-      }
-    }
-
-    if (msg.type === 'greedy-done') {
-      progressFill.style.width = '100%';
-      note.textContent = 'Done.';
-      const list = document.getElementById('cov-greedy-list');
-      if (list) {
-        list.innerHTML = msg.top10.map((r, idx) => {
-          return '<div class="gap-item"><span class="swatch" style="background:' + r.hex + '"></span><div class="gap-meta"><div class="gap-name">#' + (idx+1) + ' ' + esc(r.name) + ' (' + r.brand + ') <span class="dE-good">' + r.count + '/' + r.total + ' (' + (r.count/r.total*100).toFixed(0) + '%)</span></div><div class="gap-rec">Recovers ' + r.count + ' of ' + r.total + ' sampled gap colors</div></div>' + gapActions(r.name) + '</div>';
-        }).join('');
-      }
-      progressBar.style.display = 'none';
-      btn.disabled = false;
-      btn.textContent = 'Run coverage analysis';
-      worker.terminate();
-    }
-  };
-
-  worker.onerror = function(err) {
-    note.textContent = 'Error: ' + err.message;
-    btn.disabled = false;
-    btn.textContent = 'Run coverage analysis';
-    progressBar.style.display = 'none';
-    worker.terminate();
-  };
-}
 
 function renderHueChart(el, covByHue) {
   const hueNames = ['Red','Orange','Y-Green','Green','G-Cyan','Teal','Cyan','Blue','B-Purple','Purple','Magenta','Pink'];
@@ -1586,8 +1423,7 @@ document.getElementById('target-hex').addEventListener('input', e => { const v =
 document.getElementById('paint-pool').addEventListener('change', () => { clearCache(); doMix(); });
 document.getElementById('mix-depth').addEventListener('change', () => { doMix(); });
 document.getElementById('brand-filter').addEventListener('change', () => { clearCache(); doMix(); });
-document.getElementById('gaps-run').addEventListener('click', runGaps);
-document.getElementById('cov-run').addEventListener('click', runCoverage);
+document.getElementById('analysis-run').addEventListener('click', runAnalysis);
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 
 // Color search toggle
