@@ -64,7 +64,7 @@ echo "=== Step 4: Remove any files on gh-pages that aren't in the deploy list ==
 DEPLOY_LIST=$(echo "$WEB_FILES" | tr ' ' '\n' | sort)
 for f in $(git ls-files --cached); do
   if ! echo "$DEPLOY_LIST" | grep -qx "$f"; then
-    git rm --cached "$f" 2>/dev/null && echo "  🗑  Removed stale: $f"
+    git rm -f "$f" 2>/dev/null && echo "  🗑  Removed stale: $f"
   fi
 done
 
