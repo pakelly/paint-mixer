@@ -455,6 +455,20 @@
     <div class="progress-bar" id="analysis-progress" style="display:none"><div class="progress-fill" id="analysis-progress-fill" style="width:0%"></div></div>
     <div id="analysis-summary" style="margin-top:14px"></div>
     <div id="analysis-hue-chart" style="margin-top:16px"></div>
+    <div id="coverage-wheel-section" style="margin-top:16px;display:none">
+      <div class="gap-section-title">Coverage Wheel</div>
+      <div class="note" style="margin-bottom:10px">Click any point on the wheel to send that color to the Mix tab. Drag the Value slider to slice through different brightness levels.</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+        <canvas id="coverage-wheel-canvas" width="300" height="300" style="border-radius:50%;cursor:crosshair;border:1px solid var(--border);background:#111"></canvas>
+        <div style="display:flex;align-items:center;gap:10px;width:300px">
+          <label for="coverage-wheel-value" style="font-size:0.8rem;color:var(--dim);white-space:nowrap">Value:</label>
+          <input type="range" id="coverage-wheel-value" min="0" max="100" value="50" style="flex:1;accent-color:var(--accent)">
+          <span id="coverage-wheel-value-label" style="font-size:0.8rem;min-width:40px;text-align:right">50%</span>
+        </div>
+        <div id="coverage-wheel-legend" style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;font-size:0.75rem;color:var(--dim)"></div>
+        <div id="coverage-wheel-toast" style="display:none;position:relative;background:var(--good);color:#0b1a24;padding:6px 14px;border-radius:8px;font-size:0.8rem;font-weight:600">✓ Sent to Mix toward color</div>
+      </div>
+    </div>
     <div id="analysis-hue-expansion" style="margin-top:16px"></div>
     <div id="analysis-gaps" style="margin-top:16px"></div>
     <div id="analysis-greedy" style="margin-top:16px"></div>
@@ -1279,6 +1293,7 @@ function runAnalysis() {
     let covered = 0;
     const uncovered = [];
     const covByHue = {};
+    const dEGrid = []; // full ΔE grid: {h, s, v, dE}
     const CHUNK = 80;
     for (let i = 0; i < GAMUT.length; i++) {
       const gp = GAMUT[i];
@@ -1286,6 +1301,7 @@ function runAnalysis() {
       const isCov = best.dE < THRESHOLD;
       if (isCov) covered++;
       else uncovered.push({ h: gp.h, s: gp.s, v: gp.v, lab: gp.lab, dE: best.dE });
+      dEGrid.push({ h: gp.h, s: gp.s, v: gp.v, dE: best.dE });
       const hb = Math.floor(gp.h / 30) * 30;
       if (!covByHue[hb]) covByHue[hb] = { total: 0, covered: 0 };
       covByHue[hb].total++;
@@ -1296,7 +1312,7 @@ function runAnalysis() {
     }
     uncovered.sort((a,b) => b.dE - a.dE);
     const coveragePct = (covered / GAMUT.length * 100).toFixed(1);
-    self.postMessage({ type: 'coverage-done', covered, total: GAMUT.length, uncoveredCount: uncovered.length, worst: uncovered.slice(0, 15), coveragePct, wishImpact });`,
+    self.postMessage({ type: 'coverage-done', covered, total: GAMUT.length, uncoveredCount: uncovered.length, worst: uncovered.slice(0, 15), coveragePct, wishImpact, dEGrid });`,
 
     // === PHASE 1.5: HUE EXPANSION EXPLORER ===
     `// Phase 1.5: Per-hue expansion explorer
@@ -1496,6 +1512,10 @@ function runAnalysis() {
       // Show coverage worst gaps (HSV space) temporarily while gap analysis computes
       gapsEl.innerHTML = '<div class="gap-section-title">Hardest coverage gaps (HSV space)</div>' +
         msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + Math.round(p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
+      // Initialize coverage wheel with dE grid
+      if (msg.dEGrid) {
+        initCoverageWheel(msg.dEGrid);
+      }
     }
 
     // --- Phase 1.5: Hue expansion explorer ---
@@ -1596,6 +1616,197 @@ function renderHueChart(el, covByHue) {
   }
   html += '</div>';
   el.innerHTML = html;
+}
+
+// ================= COVERAGE WHEEL =================
+let _wheelDEGrid = null; // [{h,s,v,dE}]
+let _wheelCanvas = null;
+let _wheelCtx = null;
+let _wheelValue = 50;
+
+function initCoverageWheel(dEGrid) {
+  _wheelDEGrid = dEGrid;
+  const section = document.getElementById('coverage-wheel-section');
+  if (section) section.style.display = '';
+
+  _wheelCanvas = document.getElementById('coverage-wheel-canvas');
+  _wheelCtx = _wheelCanvas.getContext('2d');
+
+  const slider = document.getElementById('coverage-wheel-value');
+  const label = document.getElementById('coverage-wheel-value-label');
+  slider.oninput = function() {
+    _wheelValue = parseInt(this.value);
+    label.textContent = _wheelValue + '%';
+    renderCoverageWheel();
+  };
+
+  // Legend
+  const legend = document.getElementById('coverage-wheel-legend');
+  legend.innerHTML =
+    '<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#4caf50;display:inline-block"></span> Reachable (ΔE&lt;3)</span>' +
+    '<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#ffb74d;display:inline-block"></span> Almost (ΔE 3–10)</span>' +
+    '<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#ef5350;display:inline-block"></span> Unreachable (ΔE&gt;10)</span>' +
+    '<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#333;display:inline-block"></span> Outside gamut</span>';
+
+  // Click handler
+  _wheelCanvas.onclick = function(e) {
+    const rect = _wheelCanvas.getBoundingClientRect();
+    const scaleX = _wheelCanvas.width / rect.width;
+    const scaleY = _wheelCanvas.height / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    const cx = _wheelCanvas.width / 2;
+    const cy = _wheelCanvas.height / 2;
+    const dx = x - cx;
+    const dy = y - cy;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const maxRadius = Math.min(cx, cy) - 1;
+    if (dist > maxRadius) return; // outside wheel
+
+    // angle: 0° at top, going clockwise
+    let angle = Math.atan2(dx, -dy) * 180 / Math.PI; // atan2(dx, -dy) gives 0 at top, clockwise
+    if (angle < 0) angle += 360;
+    const hue = angle;
+    const sat = Math.round(dist / maxRadius * 100);
+    const val = _wheelValue;
+
+    // Convert HSV to hex for the color picker
+    const rgb = hsvToRgb(hue, sat / 100, val / 100);
+    const hex = '#' + [rgb[0], rgb[1], rgb[2]].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
+
+    // Set the target color in the Mix tab
+    const picker = document.getElementById('target-picker');
+    const hexInput = document.getElementById('target-hex');
+    if (picker) picker.value = hex;
+    if (hexInput) hexInput.value = hex;
+
+    // Show toast
+    const toast = document.getElementById('coverage-wheel-toast');
+    if (toast) {
+      toast.style.display = '';
+      toast.style.opacity = '1';
+      toast.style.transition = 'opacity 0.3s';
+      clearTimeout(window._wheelToastTimer);
+      window._wheelToastTimer = setTimeout(function() {
+        toast.style.opacity = '0';
+        setTimeout(function() { toast.style.display = 'none'; }, 300);
+      }, 2000);
+    }
+  };
+
+  renderCoverageWheel();
+}
+
+function hsvToRgb(h, s, v) {
+  h = h / 60;
+  const c = v * s;
+  const x = c * (1 - Math.abs(h % 2 - 1));
+  const m = v - c;
+  let r=0, g=0, b=0;
+  if (h < 1) [r,g,b] = [c,x,0];
+  else if (h < 2) [r,g,b] = [x,c,0];
+  else if (h < 3) [r,g,b] = [0,c,x];
+  else if (h < 4) [r,g,b] = [0,x,c];
+  else if (h < 5) [r,g,b] = [x,0,c];
+  else [r,g,b] = [c,0,x];
+  return [r+m, g+m, b+m];
+}
+
+function dEToColor(dE) {
+  // Interpolate green → yellow → red based on ΔE
+  // ΔE 0 = green (#4caf50), ΔE 3 = yellow-green, ΔE 10 = red, ΔE 20+ = dark red
+  if (dE < 3) {
+    // green to yellow-green
+    const t = dE / 3;
+    const r = Math.round(76 + (255 - 76) * t * 0.3);
+    const g = Math.round(175 + (183 - 175) * t);
+    const b = Math.round(80 + (77 - 80) * t);
+    return [r, g, b];
+  } else if (dE < 10) {
+    // yellow-green to red
+    const t = (dE - 3) / 7;
+    const r = Math.round(76 + (239 - 76) * t);
+    const g = Math.round(175 + (83 - 175) * t);
+    const b = Math.round(80 + (80 - 80) * t);
+    return [r, g, b];
+  } else {
+    // red to dark red
+    const t = Math.min((dE - 10) / 20, 1);
+    const r = Math.round(239 - (239 - 80) * t);
+    const g = Math.round(83 - (83 - 30) * t);
+    const b = Math.round(80 - (80 - 30) * t);
+    return [r, g, b];
+  }
+}
+
+function renderCoverageWheel() {
+  if (!_wheelCtx || !_wheelDEGrid) return;
+  const w = _wheelCanvas.width;
+  const h = _wheelCanvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxRadius = Math.min(cx, cy) - 1;
+
+  const imageData = _wheelCtx.createImageData(w, h);
+  const data = imageData.data;
+
+  // Build a lookup map for quick ΔE access
+  // Key: "h_s_v" → dE (find nearest grid point)
+  // Grid hues: 0,15,30,...,345 (24 steps of 15°)
+  // Grid sats: 10,20,...,100 (10 steps)
+  // Grid vals: 10,20,...,100 (10 steps)
+  const gridMap = {};
+  for (const pt of _wheelDEGrid) {
+    gridMap[pt.h + '_' + pt.s + '_' + pt.v] = pt.dE;
+  }
+
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const dx = px - cx;
+      const dy = py - cy;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const idx = (py * w + px) * 4;
+
+      if (dist > maxRadius) {
+        // Outside wheel — transparent
+        data[idx] = 0;
+        data[idx+1] = 0;
+        data[idx+2] = 0;
+        data[idx+3] = 0;
+        continue;
+      }
+
+      // angle: 0° at top, going clockwise
+      let angle = Math.atan2(dx, -dy) * 180 / Math.PI;
+      if (angle < 0) angle += 360;
+      const hue = angle;
+      const sat = dist / maxRadius * 100;
+      const val = _wheelValue;
+
+      // Find nearest grid point
+      const nearestH = Math.round(hue / 15) * 15 % 360;
+      const nearestS = Math.max(10, Math.min(100, Math.round(sat / 10) * 10));
+      const nearestV = Math.max(10, Math.min(100, Math.round(val / 10) * 10));
+      const key = nearestH + '_' + nearestS + '_' + nearestV;
+
+      if (key in gridMap) {
+        const dE = gridMap[key];
+        const [r, g, b] = dEToColor(dE);
+        data[idx] = r;
+        data[idx+1] = g;
+        data[idx+2] = b;
+        data[idx+3] = 255;
+      } else {
+        // Outside gamut — dark grey
+        data[idx] = 20;
+        data[idx+1] = 20;
+        data[idx+2] = 20;
+        data[idx+3] = 255;
+      }
+    }
+  }
+
+  _wheelCtx.putImageData(imageData, 0, 0);
 }
 
 // ================= TABS =================
