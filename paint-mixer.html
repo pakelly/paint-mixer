@@ -455,6 +455,7 @@
     <div class="progress-bar" id="analysis-progress" style="display:none"><div class="progress-fill" id="analysis-progress-fill" style="width:0%"></div></div>
     <div id="analysis-summary" style="margin-top:14px"></div>
     <div id="analysis-hue-chart" style="margin-top:16px"></div>
+    <div id="analysis-hue-expansion" style="margin-top:16px"></div>
     <div id="analysis-gaps" style="margin-top:16px"></div>
     <div id="analysis-greedy" style="margin-top:16px"></div>
   </div>
@@ -1095,6 +1096,7 @@ function runAnalysis() {
   const progressFill = document.getElementById('analysis-progress-fill');
   const summaryEl = document.getElementById('analysis-summary');
   const hueChartEl = document.getElementById('analysis-hue-chart');
+  const hueExpEl = document.getElementById('analysis-hue-expansion');
   const gapsEl = document.getElementById('analysis-gaps');
   const greedyEl = document.getElementById('analysis-greedy');
 
@@ -1102,6 +1104,7 @@ function runAnalysis() {
   btn.textContent = 'Analyzing…';
   summaryEl.innerHTML = '';
   hueChartEl.innerHTML = '';
+  hueExpEl.innerHTML = '';
   gapsEl.innerHTML = '';
   greedyEl.innerHTML = '';
   noteEl.textContent = 'Starting…';
@@ -1295,6 +1298,33 @@ function runAnalysis() {
     const coveragePct = (covered / GAMUT.length * 100).toFixed(1);
     self.postMessage({ type: 'coverage-done', covered, total: GAMUT.length, uncoveredCount: uncovered.length, worst: uncovered.slice(0, 15), coveragePct, wishImpact });`,
 
+    // === PHASE 1.5: HUE EXPANSION EXPLORER ===
+    `// Phase 1.5: Per-hue expansion explorer
+    self.postMessage({ type: 'status', text: 'Computing per-hue expansion candidates…', progress: 48 });
+    const hueBuckets = [];
+    for (let hb = 0; hb < 360; hb += 30) {
+      const bucketUncovered = uncovered.filter(u => Math.floor(u.h / 30) * 30 === hb);
+      if (bucketUncovered.length === 0) continue;
+      const unowned = allPaints.filter(p => !ownedSet.has(p.name) && p.type !== 'Metallic');
+      // Filter to top 10 unowned by hue proximity to bucket center
+      const bucketCenter = hb + 15;
+      const candidates = unowned.map(p => ({ p, hd: Math.min(Math.abs(p.hsv[0]-bucketCenter), 360-Math.abs(p.hsv[0]-bucketCenter)) })).sort((a,b) => a.hd - b.hd).slice(0, 10).map(x => x.p);
+      const topPaints = [];
+      for (const c of candidates) {
+        const aug = mine.concat([{ name: c.name, hex: c.hex, type: c.type, brand: c.brand, rgb: hexToRgb(c.hex), lab: rgbToLab(hexToRgb(c.hex)), hsv: c.hsv }]);
+        let gained = 0;
+        for (const u of bucketUncovered) {
+          const best = findMixHue(aug, u.lab, u.h);
+          if (best.dE < THRESHOLD) gained++;
+        }
+        if (gained > 0) topPaints.push({ name: c.name, hex: c.hex, brand: c.brand, type: c.type, coverageGained: gained });
+      }
+      topPaints.sort((a,b) => b.coverageGained - a.coverageGained);
+      const hueNames = ['Red','Orange','Y-Green','Green','G-Cyan','Teal','Cyan','Blue','B-Purple','Purple','Magenta','Pink'];
+      hueBuckets.push({ hueBucket: hb, hueName: hueNames[hb/30] || (hb+'°'), uncoveredCount: bucketUncovered.length, topPaints: topPaints.slice(0, 3) });
+    }
+    self.postMessage({ type: 'hue-expansion', data: hueBuckets });`,
+
     // === PHASE 2: GAP DETAIL (baseline worst-colors using findMix) ===
     `// Phase 2: Baseline worst-colors (hardest paints to reach with collection)
     self.postMessage({ type: 'status', text: 'Computing gap analysis (' + PAINTS.length + ' targets)…', progress: 50 });
@@ -1312,6 +1342,31 @@ function runAnalysis() {
     const baseTotal = gapResults.reduce((s,r) => s + r.dE, 0);
     const worstGaps = gapResults.slice(0, 8);
     self.postMessage({ type: 'gaps-baseline', worstGaps, baseAvgDE, totalPaints: PAINTS.length, coveragePct, wishImpact });`,
+
+    // === PHASE 2b: BEST SINGLE BOTTLE PER GAP ===
+    `// Phase 2b: Best single unowned paint per worst gap
+    self.postMessage({ type: 'status', text: 'Finding best single bottle per gap…', progress: 66 });
+    const unownedAll = allPaints.filter(p => !ownedSet.has(p.name) && p.type !== 'Metallic');
+    const singles = [];
+    for (const gap of worstGaps) {
+      const tLab = rgbToLab(hexToRgb(gap.targetHex));
+      // Find closest unowned paint by ΔE to target
+      let bestSingle = null;
+      let bestSingleDE = Infinity;
+      for (const p of unownedAll) {
+        const dE = ciede2000(p.lab, tLab);
+        if (dE < bestSingleDE) { bestSingleDE = dE; bestSingle = p; }
+      }
+      // Compute improvement if added to mix (2-paint findMix with grid=5)
+      let mixDEWithSingle = gap.dE;
+      if (bestSingle) {
+        const aug = mine.concat([{ name: bestSingle.name, hex: bestSingle.hex, type: bestSingle.type, brand: bestSingle.brand, rgb: hexToRgb(bestSingle.hex), lab: rgbToLab(hexToRgb(bestSingle.hex)), hsv: bestSingle.hsv }]);
+        const improvedMix = findMix(aug, tLab, MIX_DEPTH, 5);
+        mixDEWithSingle = improvedMix.dE;
+      }
+      singles.push({ target: gap.target, targetHex: gap.targetHex, bestSingleName: bestSingle ? bestSingle.name : null, bestSingleHex: bestSingle ? bestSingle.hex : null, bestSingleDE: bestSingleDE, mixDEWithSingle });
+    }
+    self.postMessage({ type: 'gap-singles', singles });`,
 
     // === PHASE 3: GREEDY RECOMMENDATIONS (from gaps worker — sequential picks) ===
     `// Phase 3: Greedy sequential selection
@@ -1443,6 +1498,30 @@ function runAnalysis() {
         msg.worst.map(p => '<div class="gap-item"><span class="swatch" style="background:hsl(' + p.h + ',' + p.s + '%,' + Math.round(p.v * 0.5) + '%)"></span><div class="gap-meta"><div class="gap-name">H=' + p.h + '° S=' + p.s + '% V=' + p.v + '% <span class="dE-bad">ΔE ' + p.dE.toFixed(1) + '</span></div></div></div>').join('');
     }
 
+    // --- Phase 1.5: Hue expansion explorer ---
+    if (msg.type === 'hue-expansion') {
+      let expHTML = '<div class="gap-section-title" style="margin-top:12px">Per-hue expansion explorer</div>';
+      expHTML += '<div class="note" style="margin-bottom:10px">For each hue bucket with gaps, the top 3 unowned paints that would cover the most uncovered colors.</div>';
+      for (const bucket of msg.data) {
+        expHTML += '<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px">';
+        expHTML += '<div class="gap-name" style="margin-bottom:6px">' + esc(bucket.hueName) + ' (' + bucket.hueBucket + '°) — <span class="dE-bad">' + bucket.uncoveredCount + ' uncovered</span></div>';
+        if (bucket.topPaints.length === 0) {
+          expHTML += '<div class="gap-rec">No single paint covers additional colors in this range.</div>';
+        } else {
+          for (const tp of bucket.topPaints) {
+            expHTML += '<div class="gap-item" style="margin-top:6px;padding:8px 10px">';
+            expHTML += '<span class="swatch-sm" style="background:' + tp.hex + '"></span>';
+            expHTML += '<div class="gap-meta"><div class="gap-name">' + esc(tp.name) + ' <span class="mode-note">(' + (tp.brand || tp.type || '') + ')</span></div>';
+            expHTML += '<div class="gap-rec">Covers <b style="color:var(--good)">+' + tp.coverageGained + '</b> new colors</div></div>';
+            expHTML += gapActions(tp.name);
+            expHTML += '</div>';
+          }
+        }
+        expHTML += '</div>';
+      }
+      hueExpEl.innerHTML = expHTML;
+    }
+
     // --- Phase 2: Gap detail ---
     if (msg.type === 'gaps-baseline') {
       gapsHTML = '<div class="gap-section-title">Hardest colors to reach <span class="mode-note">(avg ΔE across all ' + msg.totalPaints + ': ' + msg.baseAvgDE.toFixed(2) + ')</span></div>';
@@ -1452,6 +1531,25 @@ function runAnalysis() {
       }).join('');
       gapsHTML += '<div class="gap-section-title" style="margin-top:20px">Recommended paints to add</div><div class="note" style="margin-bottom:10px">Greedy sequential — each pick targets the biggest remaining gap.</div><div id="analysis-picks"></div>';
       gapsEl.innerHTML = gapsHTML;
+    }
+
+    // --- Phase 2b: Best single bottle per gap ---
+    if (msg.type === 'gap-singles') {
+      for (const s of msg.singles) {
+        // Find the gap item for this target and append the single-bottle info
+        const gapItems = gapsEl.querySelectorAll('.gap-item');
+        for (const item of gapItems) {
+          const nameEl = item.querySelector('.gap-name');
+          if (nameEl && nameEl.textContent.indexOf(s.target) !== -1) {
+            const meta = item.querySelector('.gap-meta');
+            if (meta && s.bestSingleName) {
+              const singleHTML = '<div class="gap-rec" style="margin-top:4px">Best single bottle: <b>' + esc(s.bestSingleName) + '</b> <span class="swatch-sm" style="display:inline-block;vertical-align:middle;background:' + s.bestSingleHex + '"></span> (ΔE ' + s.bestSingleDE.toFixed(1) + ' alone, improves mix to ΔE ' + s.mixDEWithSingle.toFixed(1) + ')</div>';
+              meta.insertAdjacentHTML('beforeend', singleHTML);
+            }
+            break;
+          }
+        }
+      }
     }
 
     // --- Phase 3: Greedy picks ---
