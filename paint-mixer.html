@@ -1778,7 +1778,9 @@ function renderCoverageWheel() {
       // Base layer: actual HSV color, but with a minimum brightness floor for visibility
       // The ΔE data comes from the real value slice, but the displayed color uses max(val, 35%) so hues are always visible
       const displayVal = Math.max(val, 35);
-      const [br, bg, bb] = hsvToRgb(hue, sat / 100, displayVal / 100);
+      const [brF, bgF, bbF] = hsvToRgb(hue, sat / 100, displayVal / 100);
+      // hsvToRgb returns 0-1 range; convert to 0-255
+      const br = brF * 255, bg = bgF * 255, bb = bbF * 255;
 
       // Find nearest grid point for ΔE
       const nearestH = Math.round(hue / 15) * 15 % 360;
