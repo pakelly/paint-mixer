@@ -350,6 +350,7 @@
               <div class="vals" id="cm-vals"></div>
             </div>
           </div>
+          <div id="cm-closest" class="result" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);align-items:center;gap:10px"></div>
           <div class="cm-hint" id="cm-hint">Click paints from the grid to build a mix.</div>
         </div>
       </div>
@@ -2222,6 +2223,29 @@ function renderCustomMix() {
   document.getElementById('cm-vals').innerHTML =
     `Lab: ${labResult[0].toFixed(1)}, ${labResult[1].toFixed(1)}, ${labResult[2].toFixed(1)}<br>` +
     `HSV: ${hsv[0].toFixed(0)}°, ${(hsv[1]*100).toFixed(0)}%, ${(hsv[2]*100).toFixed(0)}%`;
+
+  // Show closest single bottle from current pool
+  const poolMode = document.getElementById('cm-state').value;
+  let pool = ALL_PAINTS.filter(p => p.type !== 'Metallic');
+  if (poolMode === 'owned') pool = pool.filter(p => COLLECTION_NAMES.has(p.name));
+  else if (poolMode === 'owned-wish') pool = pool.filter(p => COLLECTION_NAMES.has(p.name) || WISHLIST_NAMES.has(p.name));
+  let closestBottle = null, closestDE = Infinity;
+  for (const p of pool) {
+    const dE = deltaE2000(p.lab, labResult);
+    if (dE < closestDE) { closestDE = dE; closestBottle = p; }
+  }
+  const closestEl = document.getElementById('cm-closest');
+  if (closestEl) {
+    if (closestBottle) {
+      closestEl.innerHTML = '<span class="swatch-sm" style="background:' + closestBottle.hex + '"></span>' +
+        '<div class="result-info"><div class="result-title">Closest single bottle</div>' +
+        '<div class="result-detail">' + esc(closestBottle.name) + ' · <b>' + closestBottle.hex + '</b> · ΔE <span class="' + dEClass(closestDE) + '">' + closestDE.toFixed(1) + '</span> (' + dELabel(closestDE) + ')</div></div>';
+      closestEl.style.display = '';
+    } else {
+      closestEl.style.display = 'none';
+    }
+  }
+
   resultEl.style.display = '';
   hintEl.style.display = 'none';
 }
