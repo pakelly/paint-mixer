@@ -194,6 +194,9 @@
   /* Custom Mix tab */
   .cm-layout { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
   .cm-bench { flex: 1; min-width: 300px; max-width: 420px; position: sticky; top: 8px; }
+  @media (max-width: 768px) {
+    .cm-bench { position: static; }
+  }
   .cm-bench-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
   .cm-bench-title { font-size: 1rem; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
   .cm-bench-clear { font-size: 0.72rem; color: var(--dim); cursor: pointer; background: none; border: none; text-decoration: underline; }
