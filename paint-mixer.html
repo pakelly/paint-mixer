@@ -2231,7 +2231,8 @@ function renderCustomMix() {
   else if (poolMode === 'owned-wish') pool = pool.filter(p => COLLECTION_NAMES.has(p.name) || WISHLIST_NAMES.has(p.name));
   let closestBottle = null, closestDE = Infinity;
   for (const p of pool) {
-    const dE = deltaE2000(p.lab, labResult);
+    const pLab = rgbToLab(hexToRgb(p.hex));
+    const dE = deltaE2000(pLab, labResult);
     if (dE < closestDE) { closestDE = dE; closestBottle = p; }
   }
   const closestEl = document.getElementById('cm-closest');
