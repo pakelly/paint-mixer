@@ -340,7 +340,7 @@
           <div class="cm-mod-toggle">
             <label class="cm-checkbox-row"><input type="checkbox" id="cm-use-modifier" onchange="toggleCustomModifier()"> Add value modifier (B/W/grey)</label>
             <div id="cm-modifier-field" style="display:none;margin-top:8px">
-              <select id="cm-modifier" onchange="renderCustomMix()"><option value="">— select —</option></select>
+              <select id="cm-modifier" onchange="updateCustomModifier()"><option value="">— select —</option></select>
             </div>
           </div>
           <div class="cm-result" id="cm-result" style="display:none">
@@ -2066,6 +2066,20 @@ function toggleCustomModifier() {
       if (p) cmModifier = { name: p.name, hex: p.hex, rgb: hexToRgb(p.hex), ratio: 0 };
     }
   } else if (!useMod) {
+    cmModifier = null;
+  }
+  renderCustomMix();
+}
+
+function updateCustomModifier() {
+  const modName = document.getElementById('cm-modifier').value;
+  if (modName) {
+    const p = ALL_PAINTS.find(x => x.name === modName);
+    if (p) {
+      const oldRatio = cmModifier ? cmModifier.ratio : 0;
+      cmModifier = { name: p.name, hex: p.hex, rgb: hexToRgb(p.hex), ratio: oldRatio };
+    }
+  } else {
     cmModifier = null;
   }
   renderCustomMix();
