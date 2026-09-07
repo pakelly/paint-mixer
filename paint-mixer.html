@@ -2137,8 +2137,8 @@ function clearCustomMix() {
 function onCmSliderChange(idx, isModifier) {
   // idx = index into cmSelected, or -1 for modifier
   const all = [];
-  cmSelected.forEach((s, i) => all.push({ ref: s, idx: i, isMod: false, sliderId: 'cm-slider-' + i }));
-  if (cmModifier) all.push({ ref: cmModifier, idx: -1, isMod: true, sliderId: 'cm-slider-mod' });
+  cmSelected.forEach((s, i) => all.push({ ref: s, idx: i, isMod: false, sliderId: 'cm-slider-' + i, pctId: 'cm-pct-' + i }));
+  if (cmModifier) all.push({ ref: cmModifier, idx: -1, isMod: true, sliderId: 'cm-slider-mod', pctId: 'cm-pct-mod' });
   if (all.length === 0) return;
 
   // Read the actual slider value from DOM and sync to state
@@ -2148,8 +2148,8 @@ function onCmSliderChange(idx, isModifier) {
   });
 
   if (all.length < 2) {
-    // Single paint — no normalization needed, just re-render result
-    renderCustomMix();
+    // Single paint — no normalization needed, just update result
+    updateCmResult();
     return;
   }
 
@@ -2168,7 +2168,17 @@ function onCmSliderChange(idx, isModifier) {
   } else {
     others.forEach(s => { s.ref.ratio = remaining / others.length; });
   }
-  renderCustomMix();
+
+  // Update slider values and percentages in place (don't re-render HTML)
+  all.forEach(a => {
+    const sliderEl = document.getElementById(a.sliderId);
+    const pctEl = document.getElementById(a.pctId);
+    if (sliderEl && a !== changed) sliderEl.value = Math.round(a.ref.ratio);
+    if (pctEl) pctEl.textContent = Math.round(a.ref.ratio) + '%';
+  });
+
+  // Only update the result, not the slots
+  updateCmResult();
 }
 
 function renderCustomMix() {
@@ -2185,7 +2195,7 @@ function renderCustomMix() {
         <span class="swatch-sm" style="background:${s.hex}"></span>
         <span class="pname">${esc(s.name)}</span>
         <input type="range" id="cm-slider-${i}" min="0" max="100" value="${Math.round(s.ratio)}" oninput="onCmSliderChange(${i},false)">
-        <span class="pct">${Math.round(s.ratio)}%</span>
+        <span class="pct" id="cm-pct-${i}">${Math.round(s.ratio)}%</span>
         <button class="remove-btn" onclick="removeCustomPaint(${i})" title="Remove">×</button>
       </div>`;
     } else {
@@ -2199,10 +2209,17 @@ function renderCustomMix() {
       <span class="swatch-sm" style="background:${m.hex}"></span>
       <span class="pname">${esc(m.name)}</span>
       <input type="range" id="cm-slider-mod" min="0" max="100" value="${Math.round(m.ratio)}" oninput="onCmSliderChange(-1,true)">
-      <span class="pct">${Math.round(m.ratio)}%</span>
+      <span class="pct" id="cm-pct-mod">${Math.round(m.ratio)}%</span>
     </div>`;
   }
   slotsEl.innerHTML = html;
+
+  updateCmResult();
+}
+
+function updateCmResult() {
+  const resultEl = document.getElementById('cm-result');
+  const hintEl = document.getElementById('cm-hint');
 
   // Compute result
   const allPaints = [...cmSelected];
