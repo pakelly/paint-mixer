@@ -1392,13 +1392,30 @@ function runAnalysis() {
       return best;
     }`,
 
-    // === FINDMIXHUE (from coverage worker — fast hue-filtered 2-paint search) ===
+    // === FINDMIXHUE (from coverage worker — fast hue-filtered 2/3-paint search) ===
     `function findMixHue(paintSet, targetLab, targetHue) {
       const candidates = paintSet.map(p=>({p,hd:Math.min(Math.abs(p.hsv[0]-targetHue),360-Math.abs(p.hsv[0]-targetHue))})).sort((a,b)=>a.hd-b.hd).slice(0,Math.min(30,paintSet.length)).map(x=>x.p);
       let best = { dE: 999 };
+      // 2-paint search
       for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++)for(let r=0.15;r<=0.85;r+=0.1){
         const mixLab=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r));const dE=ciede2000(mixLab,targetLab);
         if(dE<best.dE){for(let r2=Math.max(0.05,r-0.08);r2<=Math.min(0.95,r+0.08);r2+=0.02){const m2=rgbToLab(mix2rgbLin(candidates[i],candidates[j],r2));const d2=ciede2000(m2,targetLab);if(d2<best.dE)best={dE:d2};}best={dE:best.dE<999?best.dE:dE};}
+      }
+      // 3-paint search (only if MIX_DEPTH >= 3)
+      if (typeof MIX_DEPTH !== 'undefined' && MIX_DEPTH >= 3 && candidates.length >= 3) {
+        for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++)for(let k=j+1;k<candidates.length;k++){
+          for(let r1=0.1;r1<=0.8;r1+=0.2)for(let r2=0.1;r2<=Math.min(0.8,1-r1-0.1);r2+=0.2){
+            const r3=1-r1-r2;
+            if(r3<0.05)continue;
+            const mixRgb=[
+              Math.pow(candidates[i].rgb[0],r1)*Math.pow(candidates[j].rgb[0],r2)*Math.pow(candidates[k].rgb[0],r3),
+              Math.pow(candidates[i].rgb[1],r1)*Math.pow(candidates[j].rgb[1],r2)*Math.pow(candidates[k].rgb[1],r3),
+              Math.pow(candidates[i].rgb[2],r1)*Math.pow(candidates[j].rgb[2],r2)*Math.pow(candidates[k].rgb[2],r3)
+            ];
+            const mixLab=rgbToLab(mixRgb);const dE=ciede2000(mixLab,targetLab);
+            if(dE<best.dE)best={dE:dE};
+          }
+        }
       }
       return best;
     }`,
