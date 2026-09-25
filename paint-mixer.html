@@ -1557,10 +1557,31 @@ function runAnalysis() {
       else if (s > 75) satPrefix = 'Vivid ';
       return satPrefix + valPrefix + hueName;
     }
-    const practicalGaps = uncovered
+    // Greedy selection with minimum 30° hue distance between picks
+    const MIN_HUE_DIST = 30;
+    const sortedUncovered = uncovered
       .map(c => ({ ...c, weight: practicalWeight(c), label: describeColor(c.h, c.s, c.v) }))
-      .sort((a, b) => b.weight - a.weight)
-      .slice(0, 6);
+      .sort((a, b) => b.weight - a.weight);
+    const practicalGaps = [];
+    for (const c of sortedUncovered) {
+      if (practicalGaps.length >= 6) break;
+      const tooClose = practicalGaps.some(p => {
+        const diff = Math.abs(c.h - p.h);
+        return Math.min(diff, 360 - diff) < MIN_HUE_DIST;
+      });
+      if (!tooClose) practicalGaps.push(c);
+    }
+    // If we didn't fill 6 due to distance constraint, relax to 15° for remaining slots
+    if (practicalGaps.length < 6) {
+      for (const c of sortedUncovered) {
+        if (practicalGaps.length >= 6) break;
+        const tooClose = practicalGaps.some(p => {
+          const diff = Math.abs(c.h - p.h);
+          return Math.min(diff, 360 - diff) < 15;
+        });
+        if (!tooClose) practicalGaps.push(c);
+      }
+    }
     const rainbowStatus = RAINBOW_BANDS.map(b => ({ name: b.name, desc: b.desc, covered: bandCovered[b.name] }));
     self.postMessage({ type: 'practical-gaps', practicalGaps, rainbowStatus });`,
 
